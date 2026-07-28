@@ -1,0 +1,11 @@
+# Secrets — never commit.
+config.env
+*.env
+!config.example.env
+
+# Run logs and resume-state markers.
+log/*.log
+log/state/
+
+# macOS cruft.
+.DS_Store
