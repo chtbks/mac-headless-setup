@@ -7,9 +7,9 @@ iOS development agent host described in
 
 It installs and configures: Command Line Tools, Homebrew, oh-my-zsh, Node,
 Claude Code, XcodeBuildMCP (wired to Claude Code), full Xcode (via `xcodes`),
-GitHub access (`gh` device-flow auth + git credential helper, so agents can
-clone/push private repos), Tailscale, Remote Login/SSH, and the OpenClaw CLI +
-Slack pairing.
+Git LFS, SwiftLint + swift-format, GitHub access (`gh` device-flow auth + git
+credential helper, so agents can clone/push private repos), Tailscale, Remote
+Login/SSH, the Chatbooks build secrets, and the OpenClaw CLI + Slack pairing.
 
 ---
 
@@ -99,14 +99,16 @@ interactive prompt**.
 | `00-preflight` | macOS/arch/network checks |
 | `10-clt` | Command Line Tools (headless) |
 | `20-homebrew` | Homebrew + PATH |
-| `25-brewfile` | everything in [`Brewfile`](Brewfile) |
+| `25-brewfile` | everything in [`Brewfile`](Brewfile) (incl. git-lfs, swiftlint, swift-format) |
 | `30-shell` | oh-my-zsh (near-vanilla) + PATH |
+| `35-git-lfs` | Git LFS filters (Chatbooks Flutter/LFS assets) |
 | `40-xcode` | full Xcode via `xcodes` + license accept |
 | `50-github` | GitHub auth (`gh` device flow) + git identity + credential helper |
 | `55-claude-code` | Claude Code native installer |
 | `60-xcodebuildmcp` | register XcodeBuildMCP with Claude Code |
 | `70-tailscale` | tailscaled + join tailnet |
 | `75-remote-login` | enable SSH |
+| `85-app-secrets` | Chatbooks build secrets → `~/.chatbooks-build.env` |
 | `90-openclaw` | OpenClaw CLI install + config scaffold |
 | `95-pairing` | OpenClaw daemon + Slack pairing |
 | `99-verify` | doctor / health report |

@@ -3,9 +3,14 @@
 
 # --- Core CLI ---------------------------------------------------------------
 brew "git"            # newer than the CLT-bundled git
+brew "git-lfs"        # Chatbooks Flutter frameworks + kernel_blob.bin are LFS-tracked
 brew "gh"             # GitHub auth (device flow) + git credential helper
 brew "node"           # runtime for XcodeBuildMCP (via npx)
 brew "jq"             # JSON wrangling in scripts / debugging
+
+# --- Swift lint / format ----------------------------------------------------
+brew "swiftlint"      # .swiftlint.yml in the iOS repo
+brew "swift-format"   # .swift-format in the iOS repo
 
 # --- Secrets ----------------------------------------------------------------
 brew "lastpass-cli"   # `lpass` — primary secret source (see lib/common.sh)

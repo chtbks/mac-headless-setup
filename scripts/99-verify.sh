@@ -21,6 +21,10 @@ module_main() {
   _check "Command Line Tools"      xcode-select -p
   _check "Homebrew"                brew --version
   _check "git (brew)"              git --version
+  _check "Git LFS filters"         bash -c 'git config --global --get filter.lfs.process >/dev/null 2>&1'
+  _check "swiftlint"               command -v swiftlint
+  _check "swift-format"            command -v swift-format
+  _check "Chatbooks build secrets" test -f "${HOME}/.chatbooks-build.env"
   _check "node"                    node --version
   _check "jq"                      jq --version
   _check "lastpass-cli"            command -v lpass
