@@ -27,6 +27,7 @@ module_main() {
   _check "Chatbooks build secrets" test -f "${HOME}/.chatbooks-build.env"
   _check "node"                    node --version
   _check "jq"                      jq --version
+  _check "python@3.14"             command -v python3.14
   _check "lastpass-cli"            command -v lpass
   _check "oh-my-zsh"               test -d "${HOME}/.oh-my-zsh"
   _check "gh (GitHub CLI)"         command -v gh

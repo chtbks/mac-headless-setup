@@ -5,8 +5,9 @@
 brew "git"            # newer than the CLT-bundled git
 brew "git-lfs"        # Chatbooks Flutter frameworks + kernel_blob.bin are LFS-tracked
 brew "gh"             # GitHub auth (device flow) + git credential helper
-brew "node"           # runtime for XcodeBuildMCP (via npx)
+brew "node"           # runtime for XcodeBuildMCP (via npx); artemis swagger prep (node)
 brew "jq"             # JSON wrangling in scripts / debugging
+brew "python@3.14"    # artemis API codegen (generate_api_code.py) + analytics-validator venvs
 
 # --- Swift lint / format ----------------------------------------------------
 brew "swiftlint"      # .swiftlint.yml in the iOS repo

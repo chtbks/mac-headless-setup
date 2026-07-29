@@ -63,6 +63,15 @@ the resulting secrets (see [Secrets](#secrets)):
 
 ---
 
+## Toolchain notes
+
+- **Xcode floor:** the `artemis` repo requires **Xcode 26+ / Swift 6.2**
+  (`Package.swift` is `swift-tools-version: 6.2.1`); Chatbooks needs Xcode 16+.
+  `xcodes install --latest` satisfies both — if you ever pin a version, keep it ≥26.
+- **Python:** `python@3.14` is installed for artemis's API codegen
+  (`api/generate.sh`) and its analytics-validator venvs (which are created
+  per-clone by repo scripts, not here).
+
 ## Required private repo access (`qa` GitHub user)
 
 SwiftPM resolves these private `chtbks` repos directly — the `qa` machine user
@@ -111,7 +120,7 @@ interactive prompt**.
 | `00-preflight` | macOS/arch/network checks |
 | `10-clt` | Command Line Tools (headless) |
 | `20-homebrew` | Homebrew + PATH |
-| `25-brewfile` | everything in [`Brewfile`](Brewfile) (incl. git-lfs, swiftlint, swift-format) |
+| `25-brewfile` | everything in [`Brewfile`](Brewfile) (incl. git-lfs, swiftlint, swift-format, python@3.14) |
 | `30-shell` | oh-my-zsh (near-vanilla) + PATH |
 | `35-git-lfs` | Git LFS filters (Chatbooks Flutter/LFS assets) |
 | `40-xcode` | full Xcode via `xcodes` + license accept |
