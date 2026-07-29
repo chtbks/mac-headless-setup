@@ -51,13 +51,15 @@ the resulting secrets (see [Secrets](#secrets)):
    use the interactive SSO fallback.
 3. **Apple ID** (optional) if you want the scripts to install **full Xcode**
    via `xcodes`. Otherwise only Command Line Tools are installed.
-4. **GitHub access** — nothing to pre-create: the `50-github` module runs
-   `gh` device-flow login during the run (you enter a one-time code at
-   <https://github.com/login/device>). Have your git identity handy
-   (`GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`). Because **chtbks enforces SAML SSO**,
+4. **GitHub access** — this box runs as the dedicated **Chatbooks QA machine
+   user (`qa@chatbooks.com`)**. Nothing to pre-create: the `50-github` module
+   runs `gh` device-flow login during the run (enter a one-time code at
+   <https://github.com/login/device>) — **sign in as the `qa` account, not a
+   personal one**, and ensure it has push access to the target repos. Git
+   identity defaults to that machine user. Because **chtbks enforces SAML SSO**,
    after login you may need to authorize the session for the org — the script
-   detects this and tells you. (Optional: drop a fine-grained PAT in
-   `GITHUB_TOKEN`/LastPass for a fully unattended login instead.)
+   detects this and tells you. (Optional: drop a fine-grained PAT for the `qa`
+   user in `GITHUB_TOKEN`/LastPass for a fully unattended login instead.)
 
 ---
 

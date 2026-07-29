@@ -10,7 +10,16 @@
 # chtbks likely enforces SAML SSO: after login you may still need to authorize
 # the session/token for the org. We detect that and surface it as a TODO.
 #
+# IDENTITY: this box runs as the dedicated Chatbooks QA machine user
+# (qa@chatbooks.com). Sign in to the device flow as THAT GitHub account (not a
+# personal one), and make sure it has push access to the target chtbks repos.
+#
 # Sourced by setup.sh; defines module_main.
+
+# Default git identity for the machine user (overridable via config.env / env).
+: "${GIT_AUTHOR_NAME:=Chatbooks QA}"
+: "${GIT_AUTHOR_EMAIL:=qa@chatbooks.com}"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
 
 module_main() {
   load_brew_env
@@ -50,6 +59,7 @@ module_main() {
 
   log_info "starting GitHub device-flow login — a one-time code will be shown."
   log_info "Open https://github.com/login/device on any device and enter it."
+  log_warn "Sign in as the QA machine user (${GIT_AUTHOR_EMAIL}), NOT a personal account."
   # gh drives the terminal here; it prints the code, waits, then verifies.
   # The local browser-open may fail on a headless box — that's fine, use the URL.
   if gh auth login --hostname github.com --git-protocol https --web 2>&1 | tee -a "${LOG_FILE}"; then
