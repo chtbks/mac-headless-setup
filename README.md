@@ -63,6 +63,18 @@ the resulting secrets (see [Secrets](#secrets)):
 
 ---
 
+## Required private repo access (`qa` GitHub user)
+
+SwiftPM resolves these private `chtbks` repos directly — the `qa` machine user
+must have **read** access and, because chtbks enforces SAML SSO, the session/token
+must be **SSO-authorized**. `52-repo-access` checks each and re-runs until all pass:
+
+```
+artemis  AppNavigationMacros  ServerIdentifiableMacros  ios-api
+chatty-api  chatty-ui  chatty-strings  chatty-uploader
+CustomAlert  MediaEncoder  imgly-sdk-ios-2  rudder-sdk-ios  braintree_ios
+```
+
 ## Secrets
 
 Secrets are resolved in this order, per value: **LastPass → `config.env` →
@@ -103,7 +115,9 @@ interactive prompt**.
 | `30-shell` | oh-my-zsh (near-vanilla) + PATH |
 | `35-git-lfs` | Git LFS filters (Chatbooks Flutter/LFS assets) |
 | `40-xcode` | full Xcode via `xcodes` + license accept |
+| `45-macro-trust` | disable Swift-macro fingerprint validation (headless builds) |
 | `50-github` | GitHub auth (`gh` device flow) + git identity + credential helper |
+| `52-repo-access` | verify `qa` can read the private `chtbks` SPM repos |
 | `55-claude-code` | Claude Code native installer |
 | `60-xcodebuildmcp` | register XcodeBuildMCP with Claude Code |
 | `70-tailscale` | tailscaled + join tailnet |
