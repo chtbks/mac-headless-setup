@@ -3,6 +3,7 @@
 
 # --- Core CLI ---------------------------------------------------------------
 brew "git"            # newer than the CLT-bundled git
+brew "gh"             # GitHub auth (device flow) + git credential helper
 brew "node"           # runtime for XcodeBuildMCP (via npx)
 brew "jq"             # JSON wrangling in scripts / debugging
 

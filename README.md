@@ -7,7 +7,9 @@ iOS development agent host described in
 
 It installs and configures: Command Line Tools, Homebrew, oh-my-zsh, Node,
 Claude Code, XcodeBuildMCP (wired to Claude Code), full Xcode (via `xcodes`),
-Tailscale, Remote Login/SSH, and the OpenClaw CLI + Slack pairing.
+GitHub access (`gh` device-flow auth + git credential helper, so agents can
+clone/push private repos), Tailscale, Remote Login/SSH, and the OpenClaw CLI +
+Slack pairing.
 
 ---
 
@@ -49,6 +51,13 @@ the resulting secrets (see [Secrets](#secrets)):
    use the interactive SSO fallback.
 3. **Apple ID** (optional) if you want the scripts to install **full Xcode**
    via `xcodes`. Otherwise only Command Line Tools are installed.
+4. **GitHub access** — nothing to pre-create: the `50-github` module runs
+   `gh` device-flow login during the run (you enter a one-time code at
+   <https://github.com/login/device>). Have your git identity handy
+   (`GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`). Because **chtbks enforces SAML SSO**,
+   after login you may need to authorize the session for the org — the script
+   detects this and tells you. (Optional: drop a fine-grained PAT in
+   `GITHUB_TOKEN`/LastPass for a fully unattended login instead.)
 
 ---
 
@@ -91,6 +100,7 @@ interactive prompt**.
 | `25-brewfile` | everything in [`Brewfile`](Brewfile) |
 | `30-shell` | oh-my-zsh (near-vanilla) + PATH |
 | `40-xcode` | full Xcode via `xcodes` + license accept |
+| `50-github` | GitHub auth (`gh` device flow) + git identity + credential helper |
 | `55-claude-code` | Claude Code native installer |
 | `60-xcodebuildmcp` | register XcodeBuildMCP with Claude Code |
 | `70-tailscale` | tailscaled + join tailnet |

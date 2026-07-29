@@ -25,6 +25,10 @@ module_main() {
   _check "jq"                      jq --version
   _check "lastpass-cli"            command -v lpass
   _check "oh-my-zsh"               test -d "${HOME}/.oh-my-zsh"
+  _check "gh (GitHub CLI)"         command -v gh
+  _check "GitHub authenticated"    bash -c 'gh auth status --hostname github.com >/dev/null 2>&1'
+  _check "chtbks org reachable"    bash -c 'gh repo list chtbks --limit 1 >/dev/null 2>&1'
+  _check "git identity set"        bash -c 'test -n "$(git config --global user.email)"'
   _check "Claude Code"             command -v claude
   _check "XcodeBuildMCP registered" bash -c 'claude mcp list 2>/dev/null | grep -qi xcodebuildmcp'
   _check "xcodes"                  command -v xcodes

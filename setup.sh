@@ -44,6 +44,7 @@ MODULES=(
   "25-brewfile|Brew packages (Brewfile)|25-brewfile.sh|20-homebrew"
   "30-shell|oh-my-zsh + PATH|30-shell.sh|20-homebrew"
   "40-xcode|Full Xcode via xcodes + license accept|40-xcode.sh|25-brewfile"
+  "50-github|GitHub auth (gh device flow) + git identity|50-github.sh|25-brewfile"
   "55-claude-code|Claude Code (native installer)|55-claude-code.sh|00-preflight"
   "60-xcodebuildmcp|Register XcodeBuildMCP with Claude Code|60-xcodebuildmcp.sh|25-brewfile 55-claude-code"
   "70-tailscale|Tailscale (CLI daemon + join tailnet)|70-tailscale.sh|25-brewfile"
