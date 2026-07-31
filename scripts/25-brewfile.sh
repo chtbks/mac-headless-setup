@@ -9,8 +9,20 @@ module_main() {
   local brewfile="${REPO_ROOT}/Brewfile"
   [[ -f "${brewfile}" ]] || { log_error "Brewfile missing at ${brewfile}"; return 1; }
 
-  log_info "brew update…"
-  retry brew update || log_warn "brew update failed; continuing with existing metadata"
+  # On the newest macOS, Homebrew's git bottle links a newer libcurl than the
+  # system provides (_curl_global_trace not found), crashing git-remote-https —
+  # which breaks `brew update` and any HTTPS git clone. We don't need brew git
+  # (the Command Line Tools git works with the system libcurl), so remove it if
+  # a prior run installed it and let git resolve to /usr/bin/git.
+  if brew list --formula git >/dev/null 2>&1; then
+    log_warn "removing Homebrew git (using system CLT git; avoids libcurl symbol mismatch)"
+    brew uninstall --ignore-dependencies --force git >>"${LOG_FILE}" 2>&1 || true
+    hash -r 2>/dev/null || true
+  fi
+
+  # Skip the git-based tap update; formula definitions come from the Homebrew
+  # API over curl, so bottle installs don't need a (possibly broken) git fetch.
+  export HOMEBREW_NO_AUTO_UPDATE=1
 
   # `brew bundle` is idempotent: already-installed formulae are skipped.
   # We don't abort on partial failure — the summary + `brew bundle check`

@@ -2,7 +2,10 @@
 # Installed with `brew bundle` by scripts/25-brewfile.sh (idempotent).
 
 # --- Core CLI ---------------------------------------------------------------
-brew "git"            # newer than the CLT-bundled git
+# NOTE: no `brew "git"`. On the newest macOS the Homebrew git bottle links a
+# newer libcurl than the system ships (_curl_global_trace not found), crashing
+# git-remote-https. The Command Line Tools git works with the system libcurl, so
+# we use that. git-lfs/gh don't depend on the git formula.
 brew "git-lfs"        # Chatbooks Flutter frameworks + kernel_blob.bin are LFS-tracked
 brew "gh"             # GitHub auth (device flow) + git credential helper
 brew "node"           # runtime for XcodeBuildMCP (via npx); artemis swagger prep (node)
