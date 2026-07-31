@@ -21,7 +21,9 @@ brew "tailscale"      # CLI + tailscaled daemon (headless-friendly)
 
 # --- Apple toolchain --------------------------------------------------------
 # `xcodes` installs full Xcode non-interactively when an Apple ID is provided.
-brew "xcodesorg/made/xcodes"
+# Now in homebrew-core (was the xcodesorg/made tap, which newer Homebrew refuses
+# to auto-tap mid-`brew bundle` as an untrusted third-party source).
+brew "xcodes"
 
 # --- OpenClaw ---------------------------------------------------------------
 # CLI-first for a headless host. If your account/setup turns out to need the
