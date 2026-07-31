@@ -15,8 +15,10 @@ module_main() {
   # `brew bundle` is idempotent: already-installed formulae are skipped.
   # We don't abort on partial failure — the summary + `brew bundle check`
   # below report exactly what's missing so a re-run can finish it.
+  # Newer Homebrew removed `--no-lock` (brew bundle no longer writes a lockfile),
+  # so we don't pass it. A stray Brewfile.lock.json, if one exists, is harmless.
   log_info "brew bundle (this can take a while for large casks)…"
-  retry brew bundle --file="${brewfile}" --no-lock || log_warn "brew bundle reported errors"
+  retry brew bundle --file="${brewfile}" || log_warn "brew bundle reported errors"
 
   if brew bundle check --file="${brewfile}" >/dev/null 2>&1; then
     log_ok "all Brewfile dependencies satisfied"
