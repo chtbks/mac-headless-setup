@@ -20,10 +20,11 @@ brew "lastpass-cli"   # `lpass` — primary secret source (see lib/common.sh)
 brew "tailscale"      # CLI + tailscaled daemon (headless-friendly)
 
 # --- Apple toolchain --------------------------------------------------------
-# `xcodes` installs full Xcode non-interactively when an Apple ID is provided.
-# Now in homebrew-core (was the xcodesorg/made tap, which newer Homebrew refuses
-# to auto-tap mid-`brew bundle` as an untrusted third-party source).
-brew "xcodes"
+# NOTE: `xcodes` (used to auto-install full Xcode) is intentionally NOT here.
+# On the newest macOS, homebrew-core has no `xcodes` bottle ("Tier 3 / no bottle
+# available"), which would fail the whole `brew bundle`. scripts/40-xcode.sh
+# installs it best-effort (bottle, else build-from-source) only when an Apple ID
+# is provided, and degrades gracefully otherwise.
 
 # --- OpenClaw ---------------------------------------------------------------
 # CLI-first for a headless host. If your account/setup turns out to need the

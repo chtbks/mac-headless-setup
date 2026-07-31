@@ -18,18 +18,21 @@ module_main() {
     return $?
   fi
 
-  if ! have xcodes; then
-    log_warn "xcodes not installed; leaving Command Line Tools as the toolchain"
-    add_manual_todo "Install full Xcode (App Store or 'xcodes install --latest'), then re-run: ./setup.sh --only 40-xcode"
-    return 0
-  fi
-
-  # Apple ID is optional. Without it we cannot install full Xcode headlessly.
+  # Full Xcode install needs an Apple ID. Without one, stay on CLT and don't
+  # bother installing xcodes at all.
   local apple_id
   apple_id="$(get_secret XCODES_USERNAME "MacSetup/apple-id" "Apple ID email for Xcode download" --optional)"
   if [[ -z "${apple_id}" ]]; then
     log_warn "no Apple ID provided; skipping full Xcode install (CLT remains)"
     add_manual_todo "Provide XCODES_USERNAME/XCODES_PASSWORD (or run 'xcodes install --latest' interactively) to get full Xcode"
+    return 0
+  fi
+
+  # We have an Apple ID, so we need xcodes. Install best-effort — on the newest
+  # macOS there may be no bottle, in which case we try building from source.
+  if ! _ensure_xcodes; then
+    log_warn "could not install xcodes on this OS (no bottle / build failed)"
+    add_manual_todo "Install Xcode manually (App Store) or 'brew install --build-from-source xcodes', then re-run: ./setup.sh --only 40-xcode"
     return 0
   fi
   export XCODES_USERNAME="${apple_id}"
@@ -52,6 +55,25 @@ module_main() {
   fi
 
   _finalize_xcode
+}
+
+# Ensure the `xcodes` CLI is available. Prefer a Homebrew bottle; on the newest
+# macOS (no bottle, "Tier 3") fall back to building from source. Returns non-zero
+# if xcodes still isn't available — caller degrades gracefully.
+_ensure_xcodes() {
+  have xcodes && return 0
+  load_brew_env
+  have brew || return 1
+
+  log_info "installing xcodes via Homebrew…"
+  retry brew install xcodes >>"${LOG_FILE}" 2>&1 || true
+  have xcodes && { log_ok "xcodes installed"; return 0; }
+
+  log_warn "no xcodes bottle for this OS; building from source (this is slow)…"
+  brew install --build-from-source xcodes >>"${LOG_FILE}" 2>&1 || true
+  have xcodes && { log_ok "xcodes installed (from source)"; return 0; }
+
+  return 1
 }
 
 _finalize_xcode() {
