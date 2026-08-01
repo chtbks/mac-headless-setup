@@ -49,7 +49,7 @@ MODULES=(
   "50-github|GitHub auth (gh device flow) + git identity|50-github.sh|25-brewfile"
   "52-repo-access|Verify qa access to private chtbks SPM repos|52-repo-access.sh|50-github"
   "55-claude-code|Claude Code (native installer)|55-claude-code.sh|00-preflight"
-  "60-xcodebuildmcp|Register XcodeBuildMCP with Claude Code|60-xcodebuildmcp.sh|25-brewfile 55-claude-code"
+  "60-xcodebuildmcp|Install XcodeBuildMCP CLI (global)|60-xcodebuildmcp.sh|25-brewfile"
   "70-tailscale|Tailscale (CLI daemon + join tailnet)|70-tailscale.sh|25-brewfile"
   "75-remote-login|Enable Remote Login (SSH)|75-remote-login.sh|00-preflight"
   "85-app-secrets|Chatbooks build secrets (env)|85-app-secrets.sh|25-brewfile"

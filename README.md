@@ -6,7 +6,7 @@ iOS development agent host described in
 [`docs/openclaw-ios-agent-setup-v1.md`](docs/openclaw-ios-agent-setup-v1.md).
 
 It installs and configures: Command Line Tools, Homebrew, oh-my-zsh, Node,
-Claude Code, XcodeBuildMCP (wired to Claude Code), full Xcode (via `xcodes`),
+Claude Code, the XcodeBuildMCP CLI, full Xcode (via `xcodes`),
 Git LFS, SwiftLint + swift-format, GitHub access (`gh` device-flow auth + git
 credential helper, so agents can clone/push private repos), Tailscale, Remote
 Login/SSH, the Chatbooks build secrets, and the OpenClaw CLI + Slack pairing.
@@ -128,7 +128,7 @@ interactive prompt**.
 | `50-github` | GitHub auth (`gh` device flow) + git identity + credential helper |
 | `52-repo-access` | verify `qa` can read the private `chtbks` SPM repos |
 | `55-claude-code` | Claude Code native installer |
-| `60-xcodebuildmcp` | register XcodeBuildMCP with Claude Code |
+| `60-xcodebuildmcp` | install the XcodeBuildMCP CLI globally (`xcodebuildmcp`, `xcodebuildmcp-doctor`) |
 | `70-tailscale` | tailscaled + join tailnet |
 | `75-remote-login` | enable SSH |
 | `85-app-secrets` | Chatbooks build secrets → `~/.chatbooks-build.env` |
@@ -159,9 +159,9 @@ TODO) rather than assuming they work:
    headless box. If your setup actually needs the GUI app, switch the Brewfile
    line to `cask "openclaw"`.
 3. **XcodeBuildMCP package name.** The source doc's `@sentry/xcodebuildmcp` is
-   wrong; the real package is `xcodebuildmcp` (unscoped). Registered with Claude
-   Code via `claude mcp add … npx -y xcodebuildmcp@<version>`. **OpenClaw-side
-   registration is a marked TODO** pending its real MCP mechanism.
+   wrong; the real package is `xcodebuildmcp` (unscoped). We install it as a
+   **CLI** (`npm install -g xcodebuildmcp` → `xcodebuildmcp` +
+   `xcodebuildmcp-doctor`), not as a registered MCP server.
 4. **`systemsetup -setremotelogin on` may need Full Disk Access** on recent
    macOS — a GUI-only grant. If so, the step degrades to a manual TODO (Tailscale
    SSH may already cover remote access).

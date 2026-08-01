@@ -35,7 +35,7 @@ module_main() {
   _check "chtbks org reachable"    bash -c 'gh repo list chtbks --limit 1 >/dev/null 2>&1'
   _check "git identity set"        bash -c 'test -n "$(git config --global user.email)"'
   _check "Claude Code"             command -v claude
-  _check "XcodeBuildMCP registered" bash -c 'claude mcp list 2>/dev/null | grep -qi xcodebuildmcp'
+  _check "xcodebuildmcp CLI"       command -v xcodebuildmcp
   _check "xcodes"                  command -v xcodes
   _check "full Xcode selected"     bash -c 'xcode-select -p 2>/dev/null | grep -q Xcode.app'
   _check "tailscale binary"        command -v tailscale

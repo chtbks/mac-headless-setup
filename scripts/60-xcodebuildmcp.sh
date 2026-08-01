@@ -1,54 +1,45 @@
 #!/usr/bin/env bash
-# 60-xcodebuildmcp.sh — register XcodeBuildMCP with Claude Code.
+# 60-xcodebuildmcp.sh — install the XcodeBuildMCP CLI globally.
 #
-# Corrects the source doc, which used the wrong npm package name
-# (`@sentry/xcodebuildmcp`) and never actually registered the server with any
-# agent. The real package is `xcodebuildmcp` (unscoped, by getsentry). We run it
-# via `npx` pinned to a version for reproducibility — no global install.
+# We use XcodeBuildMCP as a command-line tool, not as a registered MCP server.
+# A global npm install puts two binaries on PATH:
+#   - `xcodebuildmcp`         (the CLI)
+#   - `xcodebuildmcp-doctor`  (environment diagnostics)
 #
-# OpenClaw registration is intentionally left as a TODO: OpenClaw's real MCP
-# mechanism is unverified (see docs/ and README). Fill in once confirmed.
+# NOTE: the source doc's package name `@sentry/xcodebuildmcp` is wrong; the real
+# package is `xcodebuildmcp` (unscoped, by getsentry).
 #
 # Sourced by setup.sh; defines module_main.
 
-# Pin the version for reproducible builds. Bump deliberately.
+# Pin for reproducibility; bump deliberately. Set to a version or "latest".
 XCODEBUILDMCP_VERSION="${XCODEBUILDMCP_VERSION:-latest}"
 
 module_main() {
   load_brew_env
-  export PATH="${HOME}/.local/bin:${PATH}"
 
   have node || { log_error "node missing (Brewfile step incomplete)"; return 1; }
-  have claude || { log_error "claude missing (55-claude-code incomplete)"; return 1; }
+  have npm  || { log_error "npm missing (node install incomplete)"; return 1; }
 
-  # Sanity-check the package resolves before wiring it up.
-  log_info "verifying xcodebuildmcp@${XCODEBUILDMCP_VERSION} resolves on npm…"
-  if ! retry npm view "xcodebuildmcp@${XCODEBUILDMCP_VERSION}" version >/dev/null 2>&1; then
-    log_error "npm package 'xcodebuildmcp' did not resolve — check the name/version"
-    return 1
-  fi
-
-  # Register with Claude Code at user scope so all projects see it.
-  # If it's already registered, `claude mcp add` may error; treat as idempotent.
-  if claude mcp list 2>/dev/null | grep -qi 'xcodebuildmcp'; then
-    log_ok "XcodeBuildMCP already registered with Claude Code"
+  if have xcodebuildmcp; then
+    log_ok "xcodebuildmcp CLI already installed ($(_xbmcp_version))"
   else
-    log_info "registering XcodeBuildMCP with Claude Code (user scope)…"
-    if claude mcp add xcodebuildmcp --scope user -- \
-         npx -y "xcodebuildmcp@${XCODEBUILDMCP_VERSION}" 2>&1 | tee -a "${LOG_FILE}"; then
-      log_ok "registered XcodeBuildMCP"
-    else
-      log_error "claude mcp add failed"
+    log_info "installing xcodebuildmcp CLI globally (npm)…"
+    if ! retry npm install -g "xcodebuildmcp@${XCODEBUILDMCP_VERSION}"; then
+      log_error "npm install -g xcodebuildmcp failed"
       return 1
     fi
+    hash -r 2>/dev/null || true
+    have xcodebuildmcp || { log_error "xcodebuildmcp not on PATH after install"; return 1; }
+    log_ok "installed xcodebuildmcp CLI ($(_xbmcp_version))"
   fi
 
-  # -------------------------------------------------------------------------
-  # TODO(openclaw): register XcodeBuildMCP with OpenClaw's code agent once its
-  # real MCP configuration is confirmed. Placeholder so it shows in the summary.
-  # -------------------------------------------------------------------------
-  add_manual_todo "Register XcodeBuildMCP with OpenClaw's code agent (mechanism TBD — see docs/openclaw-ios-agent-setup-v1.md)"
-
-  log_info "XcodeBuildMCP wired to Claude Code; OpenClaw registration pending verification"
+  log_info "xcodebuildmcp CLI ready — run 'xcodebuildmcp-doctor' to verify the Xcode/simulator environment"
   return 0
+}
+
+# Report the installed version from npm metadata (don't execute the CLI bare —
+# with no recognized args it may start the stdio server and block).
+_xbmcp_version() {
+  npm ls -g xcodebuildmcp --depth=0 2>/dev/null \
+    | sed -nE 's/.*xcodebuildmcp@([0-9][0-9.]*).*/\1/p' | head -n1
 }
