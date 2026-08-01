@@ -10,6 +10,7 @@ brew "git-lfs"        # Chatbooks Flutter frameworks + kernel_blob.bin are LFS-t
 brew "gh"             # GitHub auth (device flow) + git credential helper
 brew "node"           # runtime for XcodeBuildMCP (via npx); artemis swagger prep (node)
 brew "jq"             # JSON wrangling in scripts / debugging
+brew "aria2"          # parallel downloader; xcodes auto-uses it to speed the multi-GB Xcode download
 brew "python@3.14"    # artemis API codegen (generate_api_code.py) + analytics-validator venvs
 
 # --- Swift lint / format ----------------------------------------------------
