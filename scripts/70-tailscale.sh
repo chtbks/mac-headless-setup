@@ -12,13 +12,21 @@ module_main() {
   load_brew_env
   have tailscale || { log_error "tailscale not installed (Brewfile step incomplete)"; return 1; }
 
-  # Install tailscaled as a system daemon (idempotent; safe to re-run).
-  if ! sudo launchctl print system/com.tailscale.tailscaled >/dev/null 2>&1; then
-    log_info "installing tailscaled system daemon…"
-    run_logged "install-system-daemon" sudo tailscale install-system-daemon || {
-      log_error "failed to install tailscaled"; return 1; }
+  # Start tailscaled via Homebrew's service manager, at SYSTEM level (sudo) so it
+  # runs headless without a login session. This is the documented way to run the
+  # open-source tailscale formula's daemon; the `tailscale install-system-daemon`
+  # subcommand only exists on Tailscale's standalone tailscaled binary.
+  # Use brew's full path because sudo's PATH may not include the Homebrew prefix.
+  local brew_bin; brew_bin="$(command -v brew)"
+  if sudo "${brew_bin}" services list 2>/dev/null | grep -qiE '^tailscale[[:space:]]+started'; then
+    log_ok "tailscaled already running (brew services)"
   else
-    log_ok "tailscaled already installed"
+    log_info "starting tailscaled (sudo brew services start tailscale)…"
+    if ! run_logged "brew services start tailscale" sudo "${brew_bin}" services start tailscale; then
+      log_error "failed to start tailscaled"
+      return 1
+    fi
+    sleep 3
   fi
 
   # Already connected?
