@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spawn Remote Coding Session"
+  short_description: "Launch a remote Claude Code session safely, or Codex or Cursor on request"
+  default_prompt: "Use $spawn-claude-session to start a remote Claude session for the Artemis project."

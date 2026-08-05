@@ -49,12 +49,15 @@ MODULES=(
   "50-github|GitHub auth (gh device flow) + git identity|50-github.sh|25-brewfile"
   "52-repo-access|Verify qa access to private chtbks SPM repos|52-repo-access.sh|50-github"
   "55-claude-code|Claude Code (native installer)|55-claude-code.sh|00-preflight"
+  "56-codex|Codex CLI + remote-control enrollment|56-codex.sh|25-brewfile"
+  "57-cursor|Cursor CLI (cursor-agent)|57-cursor.sh|00-preflight"
   "60-xcodebuildmcp|Install XcodeBuildMCP CLI (global)|60-xcodebuildmcp.sh|25-brewfile"
   "70-tailscale|Tailscale (CLI daemon + join tailnet)|70-tailscale.sh|25-brewfile"
   "75-remote-login|Enable Remote Login (SSH)|75-remote-login.sh|00-preflight"
   "85-app-secrets|Chatbooks build secrets (env)|85-app-secrets.sh|25-brewfile"
-  "90-openclaw|OpenClaw CLI install + config scaffold|90-openclaw.sh|25-brewfile"
-  "95-pairing|OpenClaw daemon + Slack pairing|95-pairing.sh|90-openclaw"
+  "90-hermes|Hermes Agent install + config (replaces OpenClaw)|90-hermes.sh|25-brewfile"
+  "92-agent-sessions|Remote-session launcher + Hermes skill|92-agent-sessions.sh|90-hermes 55-claude-code"
+  "95-hermes-gateway|Hermes gateway + Slack pairing|95-hermes-gateway.sh|90-hermes"
   "99-verify|Verify / doctor|99-verify.sh|"
 )
 

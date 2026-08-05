@@ -22,6 +22,7 @@ brew "lastpass-cli"   # `lpass` — primary secret source (see lib/common.sh)
 
 # --- Networking / remote access --------------------------------------------
 brew "tailscale"      # CLI + tailscaled daemon (headless-friendly)
+brew "tmux"           # every spawned agent session runs in its own tmux session (bin/spawn-session.sh)
 
 # --- Apple toolchain --------------------------------------------------------
 # NOTE: `xcodes` (used to auto-install full Xcode) is intentionally NOT here.
@@ -30,7 +31,14 @@ brew "tailscale"      # CLI + tailscaled daemon (headless-friendly)
 # installs it best-effort (bottle, else build-from-source) only when an Apple ID
 # is provided, and degrades gracefully otherwise.
 
-# --- OpenClaw ---------------------------------------------------------------
-# CLI-first for a headless host. If your account/setup turns out to need the
-# GUI app instead, swap this for:  cask "openclaw"
-brew "openclaw-cli"
+# --- Agent controller -------------------------------------------------------
+# OpenClaw was replaced by the Hermes Agent, which is a Git checkout rather than
+# a Homebrew package — scripts/90-hermes.sh clones it and runs its own
+# setup-hermes.sh (which installs uv and builds a Python 3.11 venv).
+#
+# `brew bundle` here runs without --cleanup, so dropping openclaw-cli from this
+# file does not uninstall it from hosts that already have it. To reclaim the
+# space on such a host:  brew uninstall openclaw-cli
+#
+# The coding agents are likewise not Homebrew packages: Claude Code, Codex, and
+# Cursor all ship self-updating installers (scripts/55, 56, 57).

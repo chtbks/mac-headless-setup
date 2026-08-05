@@ -41,7 +41,22 @@ module_main() {
   _check "tailscale binary"        command -v tailscale
   _check "tailscale connected"     bash -c 'tailscale status >/dev/null 2>&1 && ! tailscale status 2>/dev/null | grep -qi "Logged out"'
   _check "Remote Login (SSH) on"   bash -c 'sudo -n systemsetup -getremotelogin 2>/dev/null | grep -qi On'
-  _check "openclaw CLI"            command -v openclaw
+
+  # --- Agent hosts ----------------------------------------------------------
+  _check "tmux"                    command -v tmux
+  _check "Codex CLI"               command -v codex
+  _check "Codex authenticated"     bash -c 'codex login status >/dev/null 2>&1'
+  _check "Codex remote control"    bash -c 'codex remote-control start >/dev/null 2>&1'
+  _check "Cursor CLI"              command -v cursor-agent
+  _check "Cursor authenticated"    bash -c 'cursor-agent status >/dev/null 2>&1'
+
+  # --- Hermes + session launcher -------------------------------------------
+  _check "hermes CLI"              command -v hermes
+  _check "Hermes config"           test -f "${HOME}/.hermes/config.yaml"
+  _check "Hermes Slack channel"    bash -c 'grep -qE "^\s*slack:" "${HOME}/.hermes/config.yaml" 2>/dev/null'
+  _check "Hermes gateway running"  bash -c 'pgrep -f "hermes.*gateway" >/dev/null 2>&1'
+  _check "session launcher"        test -x "${HOME}/spawn-session.sh"
+  _check "spawn-session skill"     test -f "${HOME}/.hermes/skills/autonomous-ai-agents/spawn-claude-session/SKILL.md"
 
   log_info "doctor: ${pass} OK, ${fail} missing/incomplete"
   # Always succeed — diagnostics shouldn't mark the run failed.

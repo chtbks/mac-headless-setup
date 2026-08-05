@@ -1,15 +1,20 @@
 # MacSetup — Headless iOS Agent-Host Bootstrap
 
 Fault-tolerant, **re-runnable** scripts that turn a **fresh, headless Mac**
-(latest macOS, a user logged in, otherwise at defaults) into the Slack-driven
-iOS development agent host described in
-[`docs/openclaw-ios-agent-setup-v1.md`](docs/openclaw-ios-agent-setup-v1.md).
+(latest macOS, a user logged in, otherwise at defaults) into a Slack-driven iOS
+development agent host. The original writeup is
+[`docs/openclaw-ios-agent-setup-v1.md`](docs/openclaw-ios-agent-setup-v1.md);
+**OpenClaw has since been replaced by the [Hermes Agent](https://github.com/NousResearch/hermes-agent)**
+as the Slack-facing controller.
 
 It installs and configures: Command Line Tools, Homebrew, oh-my-zsh, Node,
-Claude Code, the XcodeBuildMCP CLI, full Xcode (via `xcodes`),
-Git LFS, SwiftLint + swift-format, GitHub access (`gh` device-flow auth + git
-credential helper, so agents can clone/push private repos), Tailscale, Remote
-Login/SSH, the Chatbooks build secrets, and the OpenClaw CLI + Slack pairing.
+the XcodeBuildMCP CLI, full Xcode (via `xcodes`), Git LFS, SwiftLint +
+swift-format, GitHub access (`gh` device-flow auth + git credential helper, so
+agents can clone/push private repos), Tailscale, Remote Login/SSH, the Chatbooks
+build secrets, Hermes + Slack pairing, and three coding agents reachable from a
+phone — **Claude Code, Codex, and Cursor** — plus the launcher that spawns
+isolated remote sessions for them (see
+[`docs/remote-agent-sessions.md`](docs/remote-agent-sessions.md)).
 
 ---
 
@@ -38,12 +43,12 @@ Already have the repo cloned? Just:
 Some things genuinely can't be automated on the box — do them first and stash
 the resulting secrets (see [Secrets](#secrets)):
 
-1. **Create the Slack app** at <https://api.slack.com/apps> (from scratch):
-   - **Socket Mode** → On → generate an **App-Level Token** (`xapp-…`) with
-     `connections:write`.
-   - **OAuth & Permissions** → Bot Token Scopes: `app_mentions:read`,
-     `chat:write`, `im:history`, `im:read`, `im:write`.
-   - Install to workspace → copy the **Bot User OAuth Token** (`xoxb-…`).
+1. **Slack app for Hermes.** Hermes generates its own app manifest — run
+   `hermes slack` on the box (the `90-hermes` module pauses for this), create the
+   app from the manifest at <https://api.slack.com/apps>, install it to the
+   workspace, and paste the **Bot User OAuth Token** (`xoxb-…`) and **App-Level
+   Token** (`xapp-…`) where Hermes asks. Tokens live in `~/.hermes/config.yaml`,
+   not in this repo's `config.env`.
 2. **Tailscale auth key** (recommended) from
    <https://login.tailscale.com/admin/settings/keys>. Prefer a **tagged**,
    reusable key for a long-lived host. If your tailnet is managed by Google
@@ -84,6 +89,28 @@ chatty-api  chatty-ui  chatty-strings  chatty-uploader
 CustomAlert  MediaEncoder  imgly-sdk-ios-2  rudder-sdk-ios  braintree_ios
 ```
 
+## Remote agent sessions
+
+Hermes spawns isolated agent sessions on this box through one launcher, installed
+by `92-agent-sessions`:
+
+```bash
+~/spawn-session.sh [--agent claude|codex|cursor] <main-project> <display-name> [additional-project ...]
+```
+
+`--agent` **defaults to `claude`**; the Hermes skill only picks codex or cursor
+when you ask for one by name. Each session gets its own Git worktree and `tmux`
+session, and the launcher prints how to reach it (a `claude.ai/code` session, a
+`cursor.com/agents#workerId=…` link, or the worktree to open in the ChatGPT app).
+
+The three agents do **not** share a remote-access model — Claude Code and Cursor
+register per session, Codex is machine-wide and cannot name a thread remotely.
+[`docs/remote-agent-sessions.md`](docs/remote-agent-sessions.md) covers that, the
+Codex trust and enrollment quirks (including the `401 token_revoked` trap after
+re-login), and how to connect from the macOS desktop app.
+
+---
+
 ## Secrets
 
 Secrets are resolved in this order, per value: **LastPass → `config.env` →
@@ -108,8 +135,9 @@ interactive prompt**.
   depend on the failed one are skipped, and a summary lists what failed so you
   can re-run to finish.
 - **Logged.** Every run is tee'd to `log/setup-<timestamp>.log`.
-- **Human checkpoints.** Steps needing a human (OpenClaw pairing, Tailscale SSO
-  fallback, Xcode 2FA) pause with instructions; pressing Enter skips and adds
+- **Human checkpoints.** Steps needing a human (Hermes/Slack pairing, `codex
+  login` and `cursor-agent login`, Tailscale SSO fallback, Xcode 2FA) pause with
+  instructions; pressing Enter skips and adds
   the item to a "finish manually" list at the end.
 - **One sudo prompt.** Asked once up front, kept warm in the background.
 
@@ -128,12 +156,15 @@ interactive prompt**.
 | `50-github` | GitHub auth (`gh` device flow) + git identity + credential helper |
 | `52-repo-access` | verify `qa` can read the private `chtbks` SPM repos |
 | `55-claude-code` | Claude Code native installer |
+| `56-codex` | Codex CLI + machine-wide remote-control enrollment |
+| `57-cursor` | Cursor CLI (`cursor-agent`) |
 | `60-xcodebuildmcp` | install the XcodeBuildMCP CLI globally (`xcodebuildmcp`, `xcodebuildmcp-doctor`) |
 | `70-tailscale` | tailscaled + join tailnet |
 | `75-remote-login` | enable SSH |
 | `85-app-secrets` | Chatbooks build secrets → `~/.chatbooks-build.env` |
-| `90-openclaw` | OpenClaw CLI install + config scaffold |
-| `95-pairing` | OpenClaw daemon + Slack pairing |
+| `90-hermes` | Hermes Agent clone + `setup-hermes.sh` + config (replaces OpenClaw) |
+| `92-agent-sessions` | install `~/spawn-session.sh` + the Hermes `spawn-claude-session` skill |
+| `95-hermes-gateway` | start the Hermes gateway + Slack pairing |
 | `99-verify` | doctor / health report |
 
 Run a single module (dependencies still checked):
@@ -150,14 +181,13 @@ These are transcribed from the source doc and **could not be verified** while
 authoring. The scripts handle them defensively (probe, gate, degrade to a manual
 TODO) rather than assuming they work:
 
-1. **OpenClaw's Slack integration, `config.yaml` schema, and
-   `daemon`/`pairing` subcommands.** `90-openclaw.sh` probes the real
-   `openclaw --help`, runs `openclaw init` if present, and diffs its output
-   against [`templates/openclaw.config.yaml.tmpl`](templates/openclaw.config.yaml.tmpl).
-   The template schema is a best-effort scaffold.
-2. **`openclaw-cli` vs the `openclaw` cask.** We install the CLI formula for a
-   headless box. If your setup actually needs the GUI app, switch the Brewfile
-   line to `cask "openclaw"`.
+1. **Hermes config is owned by Hermes.** `90-hermes.sh` deliberately does not
+   template `~/.hermes/config.yaml` — the OpenClaw-era scaffold guessed at a
+   schema and was never right. Channel setup is a checkpoint (`hermes setup`,
+   `hermes slack`) and the module only verifies a `slack:` section exists.
+2. **The Hermes gateway is not supervised.** `95-hermes-gateway.sh` starts it for
+   the current boot only and records a manual TODO; it does not install a launchd
+   agent.
 3. **XcodeBuildMCP package name.** The source doc's `@sentry/xcodebuildmcp` is
    wrong; the real package is `xcodebuildmcp` (unscoped). We install it as a
    **CLI** (`npm install -g xcodebuildmcp` → `xcodebuildmcp` +
@@ -179,7 +209,8 @@ Brewfile                     brew packages
 config.example.env           secret template (copy to config.env)
 lib/common.sh                logging, run-step engine, retry, secrets, checkpoints
 scripts/*.sh                 one module per concern (see table above)
-templates/                   config templates (OpenClaw)
-docs/                        the original setup writeup (reference)
+bin/spawn-session.sh         remote-session launcher (installed to ~/spawn-session.sh)
+templates/hermes-skills/     the Hermes skill that calls the launcher
+docs/                        original setup writeup + remote-agent-sessions.md
 log/                         run logs + resume markers (gitignored)
 ```

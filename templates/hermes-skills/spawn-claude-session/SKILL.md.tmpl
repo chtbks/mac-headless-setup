@@ -1,0 +1,212 @@
+---
+name: spawn-claude-session
+description: "Launch a background remote coding session — Claude Code by default, or Codex or Cursor when the user asks for one — with one main project in a session worktree and, when requested, additional local projects available in the same session. Use when asked to start, launch, spawn, or create a single- or multi-project Claude, Codex, or Cursor session for projects under ${WORKSPACE_DIR}, including AppNavigationMacros, ServerIdentifiableMacros, artemis, backend, fluttershy, or iphone. Also use for requests that mention one or more of those project names together with Claude, Codex, Cursor, coding, a remote session, phone access, or desktop access."
+---
+
+# Spawn Remote Coding Session
+
+## Overview
+
+Launch one isolated remote coding session by invoking the existing launcher. The
+agent is **Claude Code by default**; Codex and Cursor are used only when the user
+asks for one. The launcher owns validation, unique naming, background tmux
+startup, verification, and failed-launch cleanup.
+
+The three agents reach remote clients differently, and that difference is visible
+in what the launcher reports:
+
+- **Claude Code** registers Remote Control per session, so each session shows up
+  on its own at claude.ai/code and in the phone app under its display name.
+  Claude Code creates and cleans up its own worktree.
+- **Cursor** registers a named private worker with Cursor, scoped to the
+  directories it is given. The launcher creates the worktree, starts the worker,
+  and reports a `cursor.com/agents#workerId=…` link for that session. No agent
+  runs locally: the user starts an agent against the worker from Cursor on the
+  web or their phone.
+- **Codex** has no per-session remote flag. Remote control is machine-wide: one
+  `codex remote-control` daemon carries every thread on this host, and threads
+  are opened from the ChatGPT app by picking a directory. The launcher therefore
+  ensures the daemon is running and enrolled, creates the Git worktree itself,
+  and starts a Codex session in it. The display name is used for local resource
+  names only — Codex names its own threads.
+
+## Workflow
+
+1. Choose the agent.
+   - Default to `claude` whenever the request does not name an agent.
+   - Use `codex` only when the user explicitly asks for Codex, OpenAI's coding
+     agent, or GPT-based coding. Phrases like "codex session", "use codex",
+     "spawn this on codex", or "an OpenAI agent instead" select Codex.
+   - Use `cursor` only when the user explicitly asks for Cursor, the Cursor
+     agent, or a Cursor worker. Phrases like "cursor session", "use cursor", or
+     "spawn this on cursor" select Cursor.
+   - Never infer Codex or Cursor from the subject matter of the work.
+   - If the user asks for more than one agent on the same project, that is one
+     launcher call per agent.
+
+2. Extract the main project and any additional projects from the request.
+   - Accept only a direct child name beneath `${WORKSPACE_DIR}`.
+   - Known projects are `AppNavigationMacros`, `ServerIdentifiableMacros`,
+     `artemis`, `backend`, `fluttershy`, and `iphone`.
+   - `iphone` may still be cloning; invoke the launcher normally and report its
+     validation error if it is not yet a usable Git repository.
+   - Require the pattern `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
+   - The main project is the project described as main, primary, or first (for
+     example, `artemis` in "an artemis session along with backend"). It receives
+     the worktree.
+   - Pass every other requested project as an additional project. Every agent
+     exposes these as extra workspace directories; they do not receive worktrees.
+   - Preserve each project's exact on-disk capitalization.
+   - Remove duplicate project mentions while preserving order.
+   - If the main project is missing or ambiguous, ask the user for it and stop.
+   - Never pass a path, slash, shell operator, or untrusted fragment as the
+     project argument.
+
+3. Choose a useful human-facing session display name.
+   - Use the user's requested name when it matches the safe-name pattern.
+   - Otherwise infer a concise lowercase kebab-case name from the work requested
+     and project context, ideally 2–5 words. Examples: `artemis-login-fix`,
+     `ios-navigation-cleanup`, or `cross-project-auth`.
+   - Include the main project when it improves recognition, but avoid
+     mechanically listing every added project.
+   - If the user provides no task context, use `<main-project>-session` for one
+     project or `<main-project>-multi-project` when additional projects are
+     present.
+   - Never use the generic name `hermes`.
+   - Never add a timestamp, PID, random suffix, or uniqueness token. The launcher
+     keeps the display name readable and separately generates unique internal
+     worktree and tmux names.
+
+4. Invoke the `terminal` tool with exactly one of these command shapes:
+
+   ```bash
+   ${HOME}/spawn-session.sh <main-project> <display-name>
+   ${HOME}/spawn-session.sh <main-project> <display-name> <additional-project> [additional-project ...]
+   ${HOME}/spawn-session.sh --agent codex <main-project> <display-name>
+   ${HOME}/spawn-session.sh --agent codex <main-project> <display-name> <additional-project> [additional-project ...]
+   ${HOME}/spawn-session.sh --agent cursor <main-project> <display-name>
+   ${HOME}/spawn-session.sh --agent cursor <main-project> <display-name> <additional-project> [additional-project ...]
+   ```
+
+   Run it in the foreground and wait for completion. `--agent`, when present,
+   comes first; omit it for Claude Code rather than passing `--agent claude`.
+   Put the main project next, followed by the display name, then additional
+   projects in the order requested. Do not `cd`, call `claude`, `codex`, or
+   `cursor-agent` directly, create a worktree manually, wrap the command in
+   `nohup`, or add shell pipelines. A Cursor launch waits on a network
+   registration round trip, so give it time rather than assuming it hung.
+
+5. Use a real tool call.
+   - Invoke the terminal tool; never print a JSON description of a proposed tool
+     call in chat.
+   - Treat terminal output as the source of truth.
+
+6. Report the result.
+   - Claim success only when the command exits successfully and prints
+     `Remote session is running.`
+   - Include the agent, the session name or label, the tmux session name, and
+     the worktree shown by the launcher.
+   - For Cursor, quote the `Run agents:` link verbatim and say that an agent has
+     to be started against the worker from Cursor before any work happens.
+   - For Codex, also pass along how to reach the session: the host is picked in
+     the ChatGPT app and the thread is opened in the worktree path the launcher
+     printed.
+   - On failure, quote the concise error and stop. Do not improvise a different
+     launch procedure.
+   - A Codex launch fails before creating anything when this machine's Codex
+     remote control is not enrolled — for example a workspace-access error from
+     `codex remote-control start`. Report that error as-is; it needs a ChatGPT
+     workspace or account change, not a different launcher invocation.
+   - A Cursor launch fails the same way when the Cursor CLI is signed out; the
+     fix is `cursor-agent login`, which the user runs themselves.
+   - Never silently fall back to a different agent than the one requested.
+
+## Examples
+
+User: `Start an Artemis Claude session.`
+
+Terminal command:
+
+```bash
+${HOME}/spawn-session.sh artemis artemis-session
+```
+
+User: `Launch a remote session for iphone called login-fix.`
+
+Terminal command:
+
+```bash
+${HOME}/spawn-session.sh iphone login-fix
+```
+
+User: `Start a new artemis session along with backend, iphone, and fluttershy.`
+
+Terminal command:
+
+```bash
+${HOME}/spawn-session.sh artemis artemis-multi-project backend iphone fluttershy
+```
+
+User: `Spin up a codex session on backend to clean up the migrations.`
+
+Terminal command:
+
+```bash
+${HOME}/spawn-session.sh --agent codex backend backend-migration-cleanup
+```
+
+User: `Use Codex for an artemis session that can also see backend.`
+
+Terminal command:
+
+```bash
+${HOME}/spawn-session.sh --agent codex artemis artemis-codex-session backend
+```
+
+User: `Start a cursor session on fluttershy for the onboarding rewrite.`
+
+Terminal command:
+
+```bash
+${HOME}/spawn-session.sh --agent cursor fluttershy fluttershy-onboarding-rewrite
+```
+
+## Common Pitfalls
+
+1. **Displaying tool JSON instead of executing it:** invoke `terminal`; prose
+   does not launch anything.
+2. **Reaching for Codex or Cursor unprompted:** Claude Code is the default. Only
+   an explicit request selects another agent.
+3. **Starting the agent separately:** the launcher already starts it in tmux, and
+   already starts the Codex remote-control daemon or the Cursor worker when one
+   is needed.
+4. **Manufacturing uniqueness:** keep the display name readable; the launcher
+   creates separate unique internal identifiers.
+5. **Creating worktrees for added directories:** only the main project receives a
+   worktree; added projects are shared directories.
+6. **Promising a named Codex thread:** the display name names local resources
+   only. Do not tell the user to look for it by name in the ChatGPT app. The
+   Cursor worker name, by contrast, is exactly what appears in Cursor.
+7. **Reporting a Cursor session as already working:** the launcher registers the
+   worker; the agent still has to be started from Cursor.
+8. **Launching once per project:** a multi-project request is one combined
+   session and one launcher call unless the user explicitly asks for separate
+   sessions.
+9. **Reporting before completion:** wait for the launcher exit and use its actual
+   output.
+10. **Trying an alternative after failure:** preserve the launcher's validation
+   and cleanup guarantees; report the error.
+
+## Verification Checklist
+
+- [ ] The agent matches the request, defaulting to Claude Code.
+- [ ] Main project, additional projects, and display name match the safe-name
+      pattern.
+- [ ] The display name reflects the requested work and contains no timestamp or
+      PID.
+- [ ] `--agent codex` or `--agent cursor` appears only when the user asked for
+      that agent, and appears before the project arguments.
+- [ ] The intended main project is the first positional launcher argument.
+- [ ] Exactly one launcher command was executed through `terminal`.
+- [ ] The command completed with a successful exit status.
+- [ ] The response reports actual launcher output rather than intended actions.
