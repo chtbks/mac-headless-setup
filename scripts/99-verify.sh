@@ -57,6 +57,10 @@ module_main() {
   _check "Hermes gateway running"  bash -c 'pgrep -f "hermes.*gateway" >/dev/null 2>&1'
   _check "session launcher"        test -x "${HOME}/spawn-session.sh"
   _check "spawn-session skill"     test -f "${HOME}/.hermes/skills/autonomous-ai-agents/spawn-claude-session/SKILL.md"
+  _check "ticketflow CLI"          test -x "${HOME}/.local/bin/ticketflow"
+  _check "ticketflow config"       test -f "${HOME}/.config/ticketflow/env"
+  _check "ticketflow doctor"       ticketflow doctor
+  _check "ticketflow launchd job"  launchctl print "gui/$(id -u)/ai.chatbooks.ticketflow"
 
   log_info "doctor: ${pass} OK, ${fail} missing/incomplete"
   # Always succeed — diagnostics shouldn't mark the run failed.

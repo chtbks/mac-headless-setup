@@ -2,6 +2,11 @@
 
 set -Eeuo pipefail
 
+# SSH and service-launched shells often omit user-local binaries. Establish a
+# predictable command search path so this launcher behaves the same from
+# launchd, Hermes, and an interactive shell.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+
 # Each project is expected at "$BASE_REPOS_DIR/<project>".
 #
 # Claude Code sessions: Claude Code creates and manages the session worktree
@@ -23,7 +28,7 @@ CODEX_WORKTREES_DIR="$BASE_REPOS_DIR/worktrees"
 CURSOR_WORKTREES_DIR="$HOME/.cursor/worktrees"
 
 usage() {
-    printf 'Usage: %s [--agent claude|codex|cursor] <main-project> <display-name> [additional-project ...]\n' "${0##*/}" >&2
+    printf 'Usage: %s [--agent claude|codex|cursor] [--prompt-file path] [--json] <main-project> <display-name> [additional-project ...]\n' "${0##*/}" >&2
     printf 'The agent defaults to claude.\n' >&2
     printf 'Examples:\n' >&2
     printf '  %s artemis cross-project-login backend iphone fluttershy\n' "${0##*/}" >&2
@@ -37,6 +42,8 @@ die() {
 }
 
 AGENT=claude
+PROMPT_FILE=''
+JSON_OUTPUT=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --agent)
@@ -46,6 +53,19 @@ while [ "$#" -gt 0 ]; do
             ;;
         --agent=*)
             AGENT=${1#--agent=}
+            shift
+            ;;
+        --prompt-file)
+            [ "$#" -ge 2 ] || { usage; exit 2; }
+            PROMPT_FILE=$2
+            shift 2
+            ;;
+        --prompt-file=*)
+            PROMPT_FILE=${1#--prompt-file=}
+            shift
+            ;;
+        --json)
+            JSON_OUTPUT=true
             shift
             ;;
         --)
@@ -67,6 +87,27 @@ case "$AGENT" in
     cursor) AGENT_COMMAND_NAME=cursor-agent ;;
     *) die "Unknown agent '$AGENT'. Use claude, codex, or cursor." ;;
 esac
+
+if [ "$JSON_OUTPUT" = true ]; then
+    command -v jq >/dev/null 2>&1 || die "Required command not found for --json: jq"
+    # Keep stdout as a clean machine-readable channel. Progress and diagnostics
+    # continue on stderr; fd 3 retains the caller's original stdout.
+    exec 3>&1 1>&2
+fi
+
+INITIAL_PROMPT=''
+if [ -n "$PROMPT_FILE" ]; then
+    [ -f "$PROMPT_FILE" ] || die "Prompt file not found: $PROMPT_FILE"
+    [ -r "$PROMPT_FILE" ] || die "Prompt file is not readable: $PROMPT_FILE"
+    PROMPT_SIZE=$(wc -c <"$PROMPT_FILE" | tr -d '[:space:]')
+    [ "$PROMPT_SIZE" -le 262144 ] || die "Prompt file exceeds 256 KiB: $PROMPT_FILE"
+    INITIAL_PROMPT=$(<"$PROMPT_FILE")
+    [ -n "$INITIAL_PROMPT" ] || die "Prompt file is empty: $PROMPT_FILE"
+fi
+
+if [ "$AGENT" = cursor ] && [ -n "$INITIAL_PROMPT" ]; then
+    die "Cursor workers cannot accept an initial prompt; start the agent from Cursor after the worker registers."
+fi
 
 if [ "$#" -lt 2 ]; then
     usage
@@ -278,6 +319,9 @@ else
     CODEX_TRUST_TOML+='}'
     AGENT_COMMAND_PARTS+=(-c "$CODEX_TRUST_TOML")
 fi
+if [ -n "$INITIAL_PROMPT" ]; then
+    AGENT_COMMAND_PARTS+=("$INITIAL_PROMPT")
+fi
 printf -v AGENT_COMMAND '%q ' "${AGENT_COMMAND_PARTS[@]}"
 AGENT_COMMAND="exec ${AGENT_COMMAND% }"
 
@@ -375,6 +419,19 @@ if [ "$AGENT" = cursor ]; then
 fi
 
 COMPLETED=true
+if [ "$JSON_OUTPUT" = true ]; then
+    ADDITIONAL_DIRS_JSON=$(jq -nc '$ARGS.positional' --args "${ADDITIONAL_PROJECT_PATHS[@]+"${ADDITIONAL_PROJECT_PATHS[@]}"}")
+    jq -nc \
+        --arg agent "$AGENT" \
+        --arg display_name "$DISPLAY_NAME" \
+        --arg tmux_session "$TMUX_SESSION" \
+        --arg worktree "$SESSION_WORKTREE_PATH" \
+        --arg branch "${WORKTREE_BRANCH:-}" \
+        --arg cursor_url "$CURSOR_WORKER_URL" \
+        --argjson additional_dirs "$ADDITIONAL_DIRS_JSON" \
+        '{status:"running",agent:$agent,display_name:$display_name,tmux_session:$tmux_session,worktree:$worktree,branch:(if $branch == "" then null else $branch end),cursor_url:(if $cursor_url == "" then null else $cursor_url end),additional_dirs:$additional_dirs}' >&3
+    exit 0
+fi
 printf '\nRemote session is running.\n'
 printf '  Agent:          %s\n' "$AGENT"
 if [ "$AGENT" = claude ]; then

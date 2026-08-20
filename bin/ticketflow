@@ -1,0 +1,699 @@
+#!/usr/bin/env python3
+"""Jira-triggered intake for the remote coding-session launcher."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import shlex
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+
+TICKET_PATTERN = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
+PROJECTS = {"MEMS": "chatty-family"}
+TRIGGER_LABEL = "agent-dev"
+STARTED_LABEL = "agent-dev-started"
+MAX_RESULTS = 10
+RETRY_DELAYS_SECONDS = (60, 300, 900)
+TERMINAL_ATTEMPT = len(RETRY_DELAYS_SECONDS) + 1
+
+
+class TicketflowError(RuntimeError):
+    pass
+
+
+def now_epoch() -> int:
+    return int(time.time())
+
+
+def normalize_ticket(value: str) -> str:
+    match = TICKET_PATTERN.search(value.strip())
+    if not match:
+        raise TicketflowError(f"Could not find a Jira ticket key in: {value}")
+    key = match.group(1).upper()
+    project = key.split("-", 1)[0]
+    if project not in PROJECTS:
+        supported = ", ".join(sorted(PROJECTS))
+        raise TicketflowError(f"No repository mapping for Jira project {project}; supported: {supported}")
+    return key
+
+
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        if key in os.environ:
+            continue
+        parts = shlex.split(raw_value, posix=True)
+        os.environ[key] = parts[0] if parts else ""
+
+
+@dataclass(frozen=True)
+class Settings:
+    home: Path
+    workspace: Path
+    state_dir: Path
+    database_path: Path
+    prompt_dir: Path
+    jira_base_url: str
+    jira_email: str | None
+    jira_api_token: str | None
+    launcher_path: Path
+
+    @classmethod
+    def from_environment(cls) -> "Settings":
+        home = Path(os.environ.get("HOME", str(Path.home()))).expanduser()
+        config_dir = Path(os.environ.get("TICKETFLOW_CONFIG_DIR", home / ".config/ticketflow"))
+        load_env_file(config_dir / "env")
+        state_dir = Path(
+            os.environ.get("TICKETFLOW_STATE_DIR", home / ".local/state/ticketflow")
+        ).expanduser()
+        return cls(
+            home=home,
+            workspace=Path(os.environ.get("TICKETFLOW_WORKSPACE", home / "workspace")).expanduser(),
+            state_dir=state_dir,
+            database_path=Path(
+                os.environ.get("TICKETFLOW_DATABASE", state_dir / "ticketflow.sqlite3")
+            ).expanduser(),
+            prompt_dir=state_dir / "prompts",
+            jira_base_url=os.environ.get(
+                "JIRA_BASE_URL", "https://chatbookstown.atlassian.net"
+            ).rstrip("/"),
+            jira_email=os.environ.get("JIRA_EMAIL") or None,
+            jira_api_token=os.environ.get("JIRA_API_TOKEN") or None,
+            launcher_path=Path(
+                os.environ.get("TICKETFLOW_LAUNCHER", home / "spawn-session.sh")
+            ).expanduser(),
+        )
+
+
+class Store:
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.connection = sqlite3.connect(path, timeout=10)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_key TEXT NOT NULL,
+                source TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                state TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at INTEGER,
+                display_name TEXT NOT NULL,
+                prompt_path TEXT,
+                session_json TEXT,
+                last_error TEXT,
+                failure_reported INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS runs_ticket_created
+                ON runs(ticket_key, created_at DESC, id DESC);
+            """
+        )
+        self.connection.commit()
+
+    def close(self) -> None:
+        connection = getattr(self, "connection", None)
+        if connection is not None:
+            connection.close()
+            self.connection = None
+
+    def __del__(self) -> None:
+        self.close()
+
+    def create_run(self, ticket_key: str, source: str, mode: str) -> sqlite3.Row:
+        timestamp = now_epoch()
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT INTO runs (
+                    ticket_key, source, mode, state, display_name, created_at, updated_at
+                ) VALUES (?, ?, ?, 'discovered', ?, ?, ?)
+                """,
+                (ticket_key, source, mode, ticket_key, timestamp, timestamp),
+            )
+        return self.get(cursor.lastrowid)
+
+    def ensure_auto_run(self, ticket_key: str) -> sqlite3.Row:
+        """Return the open automatic run, creating it atomically if needed."""
+        timestamp = now_epoch()
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO runs (
+                    ticket_key, source, mode, state, display_name, created_at, updated_at
+                )
+                SELECT ?, 'jira-poller', 'auto', 'discovered', ?, ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM runs
+                    WHERE ticket_key = ? AND source = 'jira-poller'
+                      AND state != 'acknowledged'
+                )
+                """,
+                (ticket_key, ticket_key, timestamp, timestamp, ticket_key),
+            )
+        row = self.latest_auto(ticket_key)
+        if row is None:
+            raise TicketflowError(f"Could not create automatic run for {ticket_key}")
+        return row
+
+    def get(self, run_id: int) -> sqlite3.Row:
+        row = self.connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise TicketflowError(f"Run not found: {run_id}")
+        return row
+
+    def latest_auto(self, ticket_key: str) -> sqlite3.Row | None:
+        return self.connection.execute(
+            """
+            SELECT * FROM runs
+            WHERE ticket_key = ? AND source = 'jira-poller'
+            ORDER BY created_at DESC, id DESC LIMIT 1
+            """,
+            (ticket_key,),
+        ).fetchone()
+
+    def pending_acknowledgments(self) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT * FROM runs
+                WHERE source = 'jira-poller' AND state = 'launched'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY created_at ASC
+                """,
+                (now_epoch(),),
+            )
+        )
+
+    def list_runs(self, ticket_key: str | None = None) -> list[sqlite3.Row]:
+        if ticket_key:
+            return list(
+                self.connection.execute(
+                    "SELECT * FROM runs WHERE ticket_key = ? ORDER BY id DESC", (ticket_key,)
+                )
+            )
+        return list(self.connection.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 50"))
+
+    def update(self, run_id: int, **values: Any) -> sqlite3.Row:
+        if not values:
+            return self.get(run_id)
+        values["updated_at"] = now_epoch()
+        assignments = ", ".join(f"{column} = ?" for column in values)
+        parameters = [*values.values(), run_id]
+        with self.connection:
+            self.connection.execute(f"UPDATE runs SET {assignments} WHERE id = ?", parameters)
+        return self.get(run_id)
+
+    def claim_launch(self, run_id: int) -> sqlite3.Row | None:
+        timestamp = now_epoch()
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                UPDATE runs
+                SET state = 'launching', attempt_count = attempt_count + 1,
+                    next_attempt_at = NULL, updated_at = ?
+                WHERE id = ? AND state IN ('discovered', 'retrying')
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                """,
+                (timestamp, run_id, timestamp),
+            )
+        return self.get(run_id) if cursor.rowcount == 1 else None
+
+
+class JiraClient:
+    def __init__(self, base_url: str, email: str | None, api_token: str | None):
+        self.base_url = base_url.rstrip("/")
+        self.email = email
+        self.api_token = api_token
+
+    def require_credentials(self) -> None:
+        if not self.email or not self.api_token:
+            raise TicketflowError(
+                "Jira credentials are missing; configure JIRA_EMAIL and JIRA_API_TOKEN"
+            )
+
+    def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        self.require_credentials()
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        token = base64.b64encode(f"{self.email}:{self.api_token}".encode()).decode()
+        request = urllib.request.Request(
+            f"{self.base_url}{path}",
+            method=method,
+            data=data,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": f"Basic {token}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = response.read()
+                return json.loads(payload) if payload else None
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")[:500]
+            raise TicketflowError(f"Jira {method} {path} failed ({error.code}): {detail}") from error
+        except urllib.error.URLError as error:
+            raise TicketflowError(f"Jira {method} {path} failed: {error.reason}") from error
+
+    def search_triggered(self) -> list[dict[str, Any]]:
+        jql = (
+            f'project = MEMS AND labels = "{TRIGGER_LABEL}" '
+            "AND statusCategory != Done ORDER BY created ASC"
+        )
+        issues: list[dict[str, Any]] = []
+        next_page_token: str | None = None
+        while True:
+            body: dict[str, Any] = {
+                "jql": jql,
+                "maxResults": MAX_RESULTS,
+                "fields": ["summary", "labels", "status", "created"],
+            }
+            if next_page_token:
+                body["nextPageToken"] = next_page_token
+            payload = self._request("POST", "/rest/api/3/search/jql", body)
+            page = payload.get("issues", []) if isinstance(payload, dict) else []
+            issues.extend(page)
+            next_page_token = payload.get("nextPageToken") if isinstance(payload, dict) else None
+            if not next_page_token:
+                return issues
+
+    def get_issue(self, ticket_key: str) -> dict[str, Any]:
+        fields = urllib.parse.quote("summary,labels,status")
+        return self._request("GET", f"/rest/api/3/issue/{ticket_key}?fields={fields}")
+
+    def acknowledge_launch(self, ticket_key: str, session_name: str) -> None:
+        # A label update can succeed while the following comment request fails.
+        # Re-read labels so acknowledgment retries remain idempotent.
+        issue = self.get_issue(ticket_key)
+        labels = issue.get("fields", {}).get("labels", [])
+        updates: list[dict[str, str]] = []
+        if TRIGGER_LABEL in labels:
+            updates.append({"remove": TRIGGER_LABEL})
+        if STARTED_LABEL not in labels:
+            updates.append({"add": STARTED_LABEL})
+        if updates:
+            self._request(
+                "PUT",
+                f"/rest/api/3/issue/{ticket_key}",
+                {"update": {"labels": updates}},
+            )
+        self.add_comment(
+            ticket_key,
+            f"Ticketflow started Claude Remote Control session `{session_name}` on the remote development host.",
+        )
+
+    def add_comment(self, ticket_key: str, text: str) -> None:
+        self._request(
+            "POST",
+            f"/rest/api/3/issue/{ticket_key}/comment",
+            {
+                "body": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": text}],
+                        }
+                    ],
+                }
+            },
+        )
+
+
+class Launcher:
+    def __init__(self, launcher_path: Path, workspace: Path):
+        self.launcher_path = launcher_path
+        self.workspace = workspace
+
+    def launch(self, project: str, display_name: str, prompt_path: Path) -> dict[str, Any]:
+        command = [
+            str(self.launcher_path),
+            "--prompt-file",
+            str(prompt_path),
+            "--json",
+            project,
+            display_name,
+        ]
+        environment = os.environ.copy()
+        environment["SPAWN_SESSION_REPOS_DIR"] = str(self.workspace)
+        result = subprocess.run(command, text=True, capture_output=True, env=environment, check=False)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
+            raise TicketflowError(sanitize_error(detail))
+        try:
+            payload = json.loads(result.stdout.strip())
+        except json.JSONDecodeError as error:
+            raise TicketflowError("Session launcher returned invalid JSON") from error
+        if payload.get("status") != "running":
+            raise TicketflowError(f"Session launcher returned unexpected status: {payload}")
+        return payload
+
+
+def sanitize_error(value: str) -> str:
+    compact = " ".join(value.split())
+    compact = re.sub(r"(?i)(token|password|secret|authorization)[=: ]+\S+", r"\1=<redacted>", compact)
+    return compact[:500]
+
+
+def ticket_url(settings: Settings, ticket_key: str) -> str:
+    return f"{settings.jira_base_url}/browse/{ticket_key}"
+
+
+def build_prompt(settings: Settings, ticket_key: str, mode: str) -> str:
+    url = ticket_url(settings, ticket_key)
+    if mode == "manual":
+        return (
+            f"Run /cb-all for Jira ticket {url}. Keep scoping, implementation, PR iteration, "
+            "and the final human gate in this same remote session. Never run /cb-cleanup until "
+            "the user explicitly signs off."
+        )
+    return (
+        f"This session was triggered by Jira label {TRIGGER_LABEL} for {url}. "
+        "Run /cb-auto-ticket for that ticket. Keep scoping, implementation, PR iteration, "
+        "and every human gate in this same remote session. Never spawn a replacement coding "
+        "session, and never run /cb-cleanup until the user explicitly signs off."
+    )
+
+
+def write_prompt(settings: Settings, run_id: int, prompt: str) -> Path:
+    settings.prompt_dir.mkdir(parents=True, exist_ok=True)
+    path = settings.prompt_dir / f"run-{run_id}.txt"
+    path.write_text(prompt + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def project_for(ticket_key: str) -> str:
+    return PROJECTS[ticket_key.split("-", 1)[0]]
+
+
+def print_dry_run(settings: Settings, ticket_key: str, mode: str) -> None:
+    print(
+        json.dumps(
+            {
+                "ticket": ticket_key,
+                "project": project_for(ticket_key),
+                "display_name": ticket_key,
+                "mode": mode,
+                "prompt": build_prompt(settings, ticket_key, mode),
+            },
+            indent=2,
+        )
+    )
+
+
+def launch_run(
+    settings: Settings,
+    store: Store,
+    launcher: Launcher,
+    run: sqlite3.Row,
+    *,
+    dry_run: bool = False,
+) -> sqlite3.Row:
+    prompt = build_prompt(settings, run["ticket_key"], run["mode"])
+    if dry_run:
+        print_dry_run(settings, run["ticket_key"], run["mode"])
+        return run
+
+    claimed = store.claim_launch(run["id"])
+    if claimed is None:
+        return store.get(run["id"])
+    prompt_path = write_prompt(settings, run["id"], prompt)
+    store.update(run["id"], prompt_path=str(prompt_path))
+    try:
+        session = launcher.launch(
+            project_for(run["ticket_key"]), run["display_name"], prompt_path
+        )
+    except TicketflowError as error:
+        error_text = sanitize_error(str(error))
+        attempt_count = store.get(run["id"])["attempt_count"]
+        if run["source"] == "manual":
+            return store.update(run["id"], state="failed", last_error=error_text)
+        if attempt_count >= TERMINAL_ATTEMPT:
+            return store.update(run["id"], state="failed", last_error=error_text)
+        delay = RETRY_DELAYS_SECONDS[attempt_count - 1]
+        return store.update(
+            run["id"],
+            state="retrying",
+            next_attempt_at=now_epoch() + delay,
+            last_error=error_text,
+        )
+    return store.update(
+        run["id"],
+        state="launched",
+        session_json=json.dumps(session, separators=(",", ":")),
+        last_error=None,
+        next_attempt_at=None,
+    )
+
+
+def acknowledge_run(jira: JiraClient, store: Store, run: sqlite3.Row) -> sqlite3.Row:
+    session = json.loads(run["session_json"] or "{}")
+    try:
+        jira.acknowledge_launch(run["ticket_key"], session.get("display_name", run["display_name"]))
+    except TicketflowError as error:
+        return store.update(
+            run["id"], last_error=str(error), next_attempt_at=now_epoch() + 60
+        )
+    return store.update(
+        run["id"], state="acknowledged", last_error=None, next_attempt_at=None
+    )
+
+
+def report_terminal_failure(jira: JiraClient, store: Store, run: sqlite3.Row) -> None:
+    if run["state"] != "failed" or run["failure_reported"]:
+        return
+    try:
+        jira.add_comment(
+            run["ticket_key"],
+            "Ticketflow could not start the remote Claude session after four attempts. "
+            f"Run `ticketflow retry {run['ticket_key']}` on the host after correcting the problem. "
+            f"Last error: {sanitize_error(run['last_error'] or 'unknown error')}",
+        )
+    except TicketflowError as error:
+        store.update(run["id"], last_error=f"{run['last_error']}; report failed: {error}")
+        return
+    store.update(run["id"], failure_reported=1)
+
+
+def issue_has_trigger(issue: dict[str, Any]) -> bool:
+    labels = issue.get("fields", {}).get("labels", [])
+    return TRIGGER_LABEL in labels
+
+
+def print_session(session: dict[str, Any]) -> None:
+    print("Remote session is running.")
+    print(f"  Agent:          {session.get('agent', 'claude')}")
+    print(f"  Claude session: {session.get('display_name')}")
+    print(f"  tmux session:   {session.get('tmux_session')}")
+    print(f"  Worktree:       {session.get('worktree')}")
+    print("\nManage locally:")
+    print(f"  Attach: tmux attach -t {shlex.quote(str(session.get('tmux_session')))}")
+    print(
+        f"  Logs:   tmux capture-pane -p -t "
+        f"{shlex.quote(str(session.get('tmux_session')))} -S -100"
+    )
+    print(f"  Stop:   tmux kill-session -t {shlex.quote(str(session.get('tmux_session')))}")
+
+
+def command_start(args: argparse.Namespace, settings: Settings) -> int:
+    ticket_key = normalize_ticket(args.ticket)
+    if args.dry_run:
+        print_dry_run(settings, ticket_key, "manual")
+        return 0
+    store = Store(settings.database_path)
+    run = store.create_run(ticket_key, "manual", "manual")
+    launcher = Launcher(settings.launcher_path, settings.workspace)
+    launched = launch_run(settings, store, launcher, run)
+    if launched["state"] != "launched":
+        raise TicketflowError(launched["last_error"] or "Session launch failed")
+    print_session(json.loads(launched["session_json"]))
+    return 0
+
+
+def command_poll(args: argparse.Namespace, settings: Settings) -> int:
+    if not args.once:
+        raise TicketflowError("poll currently requires --once")
+    store = Store(settings.database_path)
+    jira = JiraClient(settings.jira_base_url, settings.jira_email, settings.jira_api_token)
+    launcher = Launcher(settings.launcher_path, settings.workspace)
+
+    acknowledgment_attempts: set[int] = set()
+    if not args.dry_run:
+        for pending in store.pending_acknowledgments():
+            acknowledgment_attempts.add(pending["id"])
+            acknowledge_run(jira, store, pending)
+
+    issues = jira.search_triggered()
+    launched_this_poll = False
+    for issue in issues:
+        ticket_key = normalize_ticket(issue["key"])
+        latest = store.latest_auto(ticket_key)
+        if latest and latest["state"] == "acknowledged":
+            current = jira.get_issue(ticket_key)
+            if not issue_has_trigger(current):
+                continue
+            if args.dry_run:
+                print_dry_run(settings, ticket_key, "auto")
+                return 0
+            latest = store.ensure_auto_run(ticket_key)
+        elif latest is None:
+            if args.dry_run:
+                print_dry_run(settings, ticket_key, "auto")
+                return 0
+            latest = store.ensure_auto_run(ticket_key)
+
+        if latest["state"] == "launched":
+            if args.dry_run:
+                print(json.dumps({"ticket": ticket_key, "action": "acknowledge-launch"}, indent=2))
+                return 0
+            if latest["id"] not in acknowledgment_attempts:
+                acknowledge_run(jira, store, latest)
+            continue
+        if latest["state"] == "failed":
+            if not args.dry_run:
+                report_terminal_failure(jira, store, latest)
+            continue
+        if latest["state"] not in ("discovered", "retrying"):
+            continue
+        if latest["next_attempt_at"] and latest["next_attempt_at"] > now_epoch():
+            continue
+        if launched_this_poll:
+            continue
+        if args.dry_run:
+            print_dry_run(settings, ticket_key, latest["mode"])
+            return 0
+        result = launch_run(settings, store, launcher, latest, dry_run=args.dry_run)
+        launched_this_poll = True
+        if not args.dry_run and result["state"] == "launched":
+            acknowledge_run(jira, store, result)
+        elif not args.dry_run and result["state"] == "failed":
+            report_terminal_failure(jira, store, result)
+    return 0
+
+
+def command_status(args: argparse.Namespace, settings: Settings) -> int:
+    ticket_key = normalize_ticket(args.ticket) if args.ticket else None
+    rows = Store(settings.database_path).list_runs(ticket_key)
+    if not rows:
+        print("No Ticketflow runs found.")
+        return 0
+    for row in rows:
+        error = f" error={row['last_error']}" if row["last_error"] else ""
+        print(
+            f"#{row['id']} {row['ticket_key']} {row['source']} {row['mode']} "
+            f"{row['state']} attempts={row['attempt_count']}{error}"
+        )
+    return 0
+
+
+def command_retry(args: argparse.Namespace, settings: Settings) -> int:
+    ticket_key = normalize_ticket(args.ticket)
+    store = Store(settings.database_path)
+    run = store.latest_auto(ticket_key)
+    if run is None:
+        raise TicketflowError(f"No automatic Ticketflow run found for {ticket_key}")
+    if run["state"] != "failed":
+        raise TicketflowError(f"Latest automatic run is {run['state']}, not failed")
+    store.update(
+        run["id"],
+        state="retrying",
+        attempt_count=0,
+        next_attempt_at=None,
+        last_error=None,
+        failure_reported=0,
+    )
+    print(f"Reset {ticket_key}; the next poll will retry it.")
+    return 0
+
+
+def command_doctor(_args: argparse.Namespace, settings: Settings) -> int:
+    checks = [
+        ("session launcher", settings.launcher_path.is_file() and os.access(settings.launcher_path, os.X_OK)),
+        ("Claude Code", shutil.which("claude") is not None),
+        ("mapped repository", (settings.workspace / PROJECTS["MEMS"]).is_dir()),
+        ("Jira email", bool(settings.jira_email)),
+        ("Jira API token", bool(settings.jira_api_token)),
+    ]
+    failed = False
+    for label, passed in checks:
+        print(f"{'OK  ' if passed else 'MISS'} {label}")
+        failed = failed or not passed
+    try:
+        Store(settings.database_path)
+        print("OK   SQLite state")
+    except sqlite3.Error as error:
+        print(f"MISS SQLite state: {error}")
+        failed = True
+    return 1 if failed else 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ticketflow")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    start = subparsers.add_parser("start", help="start a gated cb-all session")
+    start.add_argument("ticket", help="Jira key or URL")
+    start.add_argument("--dry-run", action="store_true")
+
+    poll = subparsers.add_parser("poll", help="poll Jira for agent-dev tickets")
+    poll.add_argument("--once", action="store_true")
+    poll.add_argument("--dry-run", action="store_true")
+
+    status = subparsers.add_parser("status", help="show intake state")
+    status.add_argument("ticket", nargs="?", help="optional Jira key or URL")
+
+    retry = subparsers.add_parser("retry", help="retry a failed automatic launch")
+    retry.add_argument("ticket", help="Jira key or URL")
+
+    subparsers.add_parser("doctor", help="check Ticketflow prerequisites")
+    return parser
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    settings = Settings.from_environment()
+    commands = {
+        "start": command_start,
+        "poll": command_poll,
+        "status": command_status,
+        "retry": command_retry,
+        "doctor": command_doctor,
+    }
+    try:
+        return commands[args.command](args, settings)
+    except (TicketflowError, sqlite3.Error, OSError) as error:
+        print(f"ERROR: {sanitize_error(str(error))}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

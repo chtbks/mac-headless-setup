@@ -57,6 +57,7 @@ MODULES=(
   "85-app-secrets|Chatbooks build secrets (env)|85-app-secrets.sh|25-brewfile"
   "90-hermes|Hermes Agent install + config (replaces OpenClaw)|90-hermes.sh|25-brewfile"
   "92-agent-sessions|Remote-session launcher + Hermes skill|92-agent-sessions.sh|90-hermes 55-claude-code"
+  "93-ticketflow|Jira-triggered remote Claude sessions|93-ticketflow.sh|92-agent-sessions"
   "95-hermes-gateway|Hermes gateway + Slack pairing|95-hermes-gateway.sh|90-hermes"
   "99-verify|Verify / doctor|99-verify.sh|"
 )

@@ -30,6 +30,61 @@ Hermes drives it through the `spawn-claude-session` skill
 which defaults to Claude Code and only selects codex/cursor when the user asks
 for one by name.
 
+The launcher also accepts two automation-oriented options without changing the
+legacy interface:
+
+```bash
+~/spawn-session.sh --prompt-file /path/to/prompt.txt --json chatty-family MEMS-123
+```
+
+`--prompt-file` passes one initial prompt as an argument (without evaluating it
+as shell input). `--json` keeps stdout machine-readable while progress and
+diagnostics go to stderr.
+
+## Ticketflow: Jira and SSH intake
+
+`scripts/93-ticketflow.sh` installs `ticketflow` at `~/.local/bin/ticketflow`.
+It is an intake layer around the same launcher, not another agent runtime.
+
+Manual SSH intake starts the normal gated workflow:
+
+```bash
+ticketflow start https://chatbookstown.atlassian.net/browse/MEMS-123
+# A key is equivalent:
+ticketflow start MEMS-123
+```
+
+Ticketflow normalizes the key, maps `MEMS` to `~/workspace/chatty-family`, names
+the Claude Remote Control session `MEMS-123`, and preloads `/cb-all`. Scoping,
+implementation, PR iteration, and final sign-off stay in that session.
+
+Automatic intake is a launchd job named `ai.chatbooks.ticketflow`. Every 60
+seconds it searches for the oldest unfinished MEMS issue carrying `agent-dev`
+and starts at most one new Claude session. That session receives
+`/cb-auto-ticket`, which continues without the grill/spec gates only if every
+conservative low-risk condition passes. Otherwise it asks questions and waits
+in the same remotely accessible session.
+
+After a successful launch Ticketflow removes `agent-dev`, adds
+`agent-dev-started`, and comments with the session name. Re-adding `agent-dev`
+creates an intentional new run. State and logs live under
+`~/.local/state/ticketflow`; Jira credentials live in
+`~/.config/ticketflow/env` with mode 0600.
+
+Useful SSH diagnostics:
+
+```bash
+ticketflow status [MEMS-123]
+ticketflow poll --once
+ticketflow retry MEMS-123
+ticketflow doctor
+```
+
+Launch failures retry after 1, 5, and 15 minutes. The fourth failure leaves the
+trigger label in place, posts one sanitized Jira comment, and waits for an
+explicit `ticketflow retry`. A successful launch whose Jira acknowledgment
+fails is only re-acknowledged; it is never launched twice.
+
 ## Why each agent differs
 
 The three agents do not share a remote-access model, and the launcher's output is
