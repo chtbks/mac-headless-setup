@@ -395,10 +395,7 @@ def build_prompt(settings: Settings, ticket_key: str, mode: str) -> str:
             "the user explicitly signs off."
         )
     return (
-        f"This session was triggered by Jira label {TRIGGER_LABEL} for {url}. "
-        "Run /cb-auto-ticket for that ticket. Keep scoping, implementation, PR iteration, "
-        "and every human gate in this same remote session. Never spawn a replacement coding "
-        "session, and never run /cb-cleanup until the user explicitly signs off."
+        f"/cb-auto-ticket {url}"
     )
 
 
