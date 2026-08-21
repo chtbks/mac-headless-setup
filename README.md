@@ -219,6 +219,7 @@ lib/common.sh                logging, run-step engine, retry, secrets, checkpoin
 scripts/*.sh                 one module per concern (see table above)
 bin/spawn-session.sh         remote-session launcher (installed to ~/spawn-session.sh)
 bin/ticketflow               Jira intake CLI (installed to ~/.local/bin/ticketflow)
+bin/ticketflow-remote        SSH client for starting Ticketflow from another machine
 templates/hermes-skills/     the Hermes skill that calls the launcher
 docs/                        original setup writeup + remote-agent-sessions.md
 log/                         run logs + resume markers (gitignored)

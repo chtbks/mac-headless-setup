@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+# The client needs only SSH. Keep Jira credentials, repository mapping, session
+# launch behavior, and prompts on the remote agent host.
+REMOTE_HOST="${TICKETFLOW_REMOTE_HOST:-chatbooks-agent}"
+REMOTE_TICKETFLOW="${TICKETFLOW_REMOTE_COMMAND:-/Users/chatbooksqa/.local/bin/ticketflow}"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: ticketflow-remote <MEMS-ticket-key-or-url>
+
+Examples:
+  ticketflow-remote MEMS-123
+  ticketflow-remote 'https://chatbookstown.atlassian.net/browse/MEMS-123'
+
+Configuration:
+  TICKETFLOW_REMOTE_HOST       SSH host or ~/.ssh/config alias
+                               (default: chatbooks-agent)
+  TICKETFLOW_REMOTE_COMMAND    ticketflow path on the remote host
+                               (default: /Users/chatbooksqa/.local/bin/ticketflow)
+EOF
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+esac
+
+if [[ "$#" -ne 1 ]]; then
+    usage
+    exit 2
+fi
+
+command -v ssh >/dev/null 2>&1 || {
+    printf 'ERROR: ssh is required\n' >&2
+    exit 1
+}
+[[ -n "$REMOTE_HOST" && "$REMOTE_HOST" != -* ]] || {
+    printf 'ERROR: TICKETFLOW_REMOTE_HOST is invalid\n' >&2
+    exit 2
+}
+
+# Quote each value before it crosses the SSH shell boundary. Ticketflow owns
+# ticket validation and starts Claude inside tmux, so SSH exits after the remote
+# startup check while the coding session keeps running.
+printf -v ticketflow_command '%q ' "$REMOTE_TICKETFLOW" start "$1"
+ticketflow_command=${ticketflow_command% }
+printf -v remote_command 'zsh -lc %q' "$ticketflow_command"
+
+exec ssh \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o ServerAliveInterval=15 \
+    -o ServerAliveCountMax=2 \
+    -o RequestTTY=no \
+    "$REMOTE_HOST" \
+    "$remote_command"

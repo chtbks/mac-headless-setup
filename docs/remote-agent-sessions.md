@@ -58,6 +58,20 @@ Ticketflow normalizes the key, maps `MEMS` to `~/workspace/chatty-family`, names
 the Claude Remote Control session `MEMS-123`, and preloads `/cb-all`. Scoping,
 implementation, PR iteration, and final sign-off stay in that session.
 
+From another machine, clone this repository and use the included thin SSH
+client. Configure `chatbooks-agent` as a host in `~/.ssh/config`, or set
+`TICKETFLOW_REMOTE_HOST` to an SSH host or alias:
+
+```bash
+cd mac-headless-setup
+TICKETFLOW_REMOTE_HOST=chatbooksqa@your-host \
+  ./bin/ticketflow-remote MEMS-123
+```
+
+The client needs only Bash and SSH. It safely forwards the ticket key or URL to
+`~/.local/bin/ticketflow start` on this Mac; Jira access, prompts, repository
+mapping, tmux, and Claude Remote Control remain owned by the remote host.
+
 Automatic intake is a launchd job named `ai.chatbooks.ticketflow`. Every 60
 seconds it searches for the oldest unfinished MEMS issue carrying `agent-dev`
 and starts at most one new Claude session. That session receives
