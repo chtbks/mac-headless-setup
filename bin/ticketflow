@@ -390,7 +390,7 @@ def build_prompt(settings: Settings, ticket_key: str, mode: str) -> str:
     url = ticket_url(settings, ticket_key)
     if mode == "manual":
         return (
-            f"Run /cb-all for Jira ticket {url}. Keep scoping, implementation, PR iteration, "
+            f"/caveman full. Run /cb-all for Jira ticket {url}. Keep scoping, implementation, PR iteration, "
             "and the final human gate in this same remote session. Never run /cb-cleanup until "
             "the user explicitly signs off."
         )
