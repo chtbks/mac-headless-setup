@@ -52,10 +52,14 @@ Manual SSH intake starts the normal gated workflow:
 ticketflow start https://chatbookstown.atlassian.net/browse/MEMS-123
 # A key is equivalent:
 ticketflow start MEMS-123
+# Pick another agent explicitly:
+ticketflow start --agent codex MEMS-123
 ```
 
 Ticketflow normalizes the key, maps `MEMS` to `~/workspace/chatty-family`, names
-the Claude Remote Control session `MEMS-123`, and preloads `/cb-all`. Scoping,
+the Claude Remote Control session `MEMS-123`, and preloads `/cb-all`. Manual key
+mappings also support `IOSP` → `iphone`, `FC` → `fluttershy`, and `COR` →
+`backend`. Scoping,
 implementation, PR iteration, and final sign-off stay in that session.
 
 From another machine, clone this repository and use the included thin SSH
@@ -73,14 +77,27 @@ The client needs only Bash and SSH. It safely forwards the ticket key or URL to
 mapping, tmux, and Claude Remote Control remain owned by the remote host.
 
 Automatic intake is a launchd job named `ai.chatbooks.ticketflow`. Every 60
-seconds it searches for the oldest unfinished MEMS issue carrying `agent-dev`
-and starts at most one new Claude session. That session receives
+seconds it searches for the oldest unfinished issue carrying one of these labels:
+
+- `josh-iphone` → `iphone`
+- `josh-artemis` → `artemis`
+- `josh-backend` → `backend`
+- `josh-fluttershy` → `fluttershy`
+- `josh-chatty-family` → `chatty-family`
+
+The Jira board/project does not affect repository selection; the label does.
+An additional `claude`, `cursor`, or `codex` label selects the agent. With no
+agent label, Ticketflow defaults to `claude`; multiple agent labels are rejected
+as ambiguous. The selected agent is stored with the run so retries use the same
+agent even if the Jira labels change.
+
+Each poll starts at most one new session. That session receives
 `/cb-auto-ticket`, which continues without the grill/spec gates only if every
 conservative low-risk condition passes. Otherwise it asks questions and waits
 in the same remotely accessible session.
 
-After a successful launch Ticketflow removes `agent-dev`, adds
-`agent-dev-started`, and comments with the session name. Re-adding `agent-dev`
+After a successful launch Ticketflow removes the triggering label, adds its
+`-started` counterpart, and comments with the session name. Re-adding the trigger
 creates an intentional new run. State and logs live under
 `~/.local/state/ticketflow`; Jira credentials live in
 `~/.config/ticketflow/env` with mode 0600.

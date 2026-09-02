@@ -110,9 +110,12 @@ Codex trust and enrollment quirks (including the `401 token_revoked` trap after
 re-login), and how to connect from the macOS desktop app.
 
 For ticket-driven work, `93-ticketflow` also installs a 60-second Jira poller.
-Adding `agent-dev` to a MEMS issue starts a conservative Claude workflow; over
-SSH, `ticketflow start MEMS-123` starts the ordinary gated `/cb-all` workflow in
-the same kind of remote session. See the Ticketflow section in
+Adding a repository label (`josh-iphone`, `josh-artemis`, `josh-backend`,
+`josh-fluttershy`, or `josh-chatty-family`) to any Jira issue starts a coding
+session in that repository. Add `cursor` or `codex` to select another agent;
+`claude` is the default. Over SSH, `ticketflow start MEMS-123` starts the
+ordinary gated `/cb-all` workflow in the same kind of remote session. See the
+Ticketflow section in
 [`docs/remote-agent-sessions.md`](docs/remote-agent-sessions.md#ticketflow-jira-and-ssh-intake).
 
 ---
@@ -171,7 +174,7 @@ interactive prompt**.
 | `85-app-secrets` | Chatbooks build secrets → `~/.chatbooks-build.env` |
 | `90-hermes` | Hermes Agent clone + `setup-hermes.sh` + config (replaces OpenClaw) |
 | `92-agent-sessions` | install `~/spawn-session.sh` + the Hermes `spawn-claude-session` skill |
-| `93-ticketflow` | install `ticketflow` + a 60-second launchd Jira poller for `agent-dev` |
+| `93-ticketflow` | install `ticketflow` + a 60-second launchd Jira poller for `josh-*` repository labels |
 | `95-hermes-gateway` | start the Hermes gateway + Slack pairing |
 | `99-verify` | doctor / health report |
 

@@ -23,9 +23,21 @@ from typing import Any, Iterable
 
 
 TICKET_PATTERN = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b", re.IGNORECASE)
-PROJECTS = {"MEMS": "chatty-family"}
-TRIGGER_LABEL = "agent-dev"
-STARTED_LABEL = "agent-dev-started"
+PROJECTS_BY_KEY = {
+    "MEMS": "chatty-family",
+    "IOSP": "iphone",
+    "FC": "fluttershy",
+    "COR": "backend",
+}
+PROJECT_LABELS = {
+    "iphone": "josh-iphone",
+    "artemis": "josh-artemis",
+    "backend": "josh-backend",
+    "fluttershy": "josh-fluttershy",
+    "chatty-family": "josh-chatty-family",
+}
+LABEL_PROJECTS = {label: project for project, label in PROJECT_LABELS.items()}
+AGENT_LABELS = {"claude", "cursor", "codex"}
 MAX_RESULTS = 10
 RETRY_DELAYS_SECONDS = (60, 300, 900)
 TERMINAL_ATTEMPT = len(RETRY_DELAYS_SECONDS) + 1
@@ -43,12 +55,56 @@ def normalize_ticket(value: str) -> str:
     match = TICKET_PATTERN.search(value.strip())
     if not match:
         raise TicketflowError(f"Could not find a Jira ticket key in: {value}")
-    key = match.group(1).upper()
-    project = key.split("-", 1)[0]
-    if project not in PROJECTS:
-        supported = ", ".join(sorted(PROJECTS))
-        raise TicketflowError(f"No repository mapping for Jira project {project}; supported: {supported}")
-    return key
+    return match.group(1).upper()
+
+
+def project_for_ticket(ticket_key: str) -> str:
+    jira_project = ticket_key.split("-", 1)[0]
+    try:
+        return PROJECTS_BY_KEY[jira_project]
+    except KeyError as error:
+        supported = ", ".join(sorted(PROJECTS_BY_KEY))
+        raise TicketflowError(
+            f"No manual repository mapping for Jira project {jira_project}; supported: {supported}"
+        ) from error
+
+
+def project_for_issue(issue: dict[str, Any]) -> str | None:
+    labels = issue.get("fields", {}).get("labels", [])
+    projects = {LABEL_PROJECTS[label] for label in labels if label in LABEL_PROJECTS}
+    if not projects:
+        return None
+    if len(projects) > 1:
+        ticket_key = issue.get("key", "unknown issue")
+        watched = sorted(label for label in labels if label in LABEL_PROJECTS)
+        raise TicketflowError(
+            f"{ticket_key} has multiple Ticketflow labels: {', '.join(watched)}"
+        )
+    return projects.pop()
+
+
+def agent_for_issue(issue: dict[str, Any]) -> str:
+    labels = issue.get("fields", {}).get("labels", [])
+    agents = AGENT_LABELS.intersection(labels)
+    if not agents:
+        return "claude"
+    if len(agents) > 1:
+        ticket_key = issue.get("key", "unknown issue")
+        raise TicketflowError(
+            f"{ticket_key} has multiple Ticketflow agent labels: {', '.join(sorted(agents))}"
+        )
+    return agents.pop()
+
+
+def trigger_label(project: str) -> str:
+    try:
+        return PROJECT_LABELS[project]
+    except KeyError as error:
+        raise TicketflowError(f"No Ticketflow label for repository {project}") from error
+
+
+def started_label(project: str) -> str:
+    return f"{trigger_label(project)}-started"
 
 
 def load_env_file(path: Path) -> None:
@@ -121,6 +177,8 @@ class Store:
                 attempt_count INTEGER NOT NULL DEFAULT 0,
                 next_attempt_at INTEGER,
                 display_name TEXT NOT NULL,
+                project TEXT,
+                agent TEXT NOT NULL DEFAULT 'claude',
                 prompt_path TEXT,
                 session_json TEXT,
                 last_error TEXT,
@@ -132,6 +190,20 @@ class Store:
                 ON runs(ticket_key, created_at DESC, id DESC);
             """
         )
+        columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(runs)")
+        }
+        if "project" not in columns:
+            self.connection.execute("ALTER TABLE runs ADD COLUMN project TEXT")
+        if "agent" not in columns:
+            self.connection.execute(
+                "ALTER TABLE runs ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'"
+            )
+        for jira_project, project in PROJECTS_BY_KEY.items():
+            self.connection.execute(
+                "UPDATE runs SET project = ? WHERE project IS NULL AND ticket_key LIKE ?",
+                (project, f"{jira_project}-%"),
+            )
         self.connection.commit()
 
     def close(self) -> None:
@@ -143,36 +215,45 @@ class Store:
     def __del__(self) -> None:
         self.close()
 
-    def create_run(self, ticket_key: str, source: str, mode: str) -> sqlite3.Row:
+    def create_run(
+        self,
+        ticket_key: str,
+        source: str,
+        mode: str,
+        project: str | None = None,
+        agent: str = "claude",
+    ) -> sqlite3.Row:
         timestamp = now_epoch()
         with self.connection:
             cursor = self.connection.execute(
                 """
                 INSERT INTO runs (
-                    ticket_key, source, mode, state, display_name, created_at, updated_at
-                ) VALUES (?, ?, ?, 'discovered', ?, ?, ?)
+                    ticket_key, source, mode, state, display_name, project, agent,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, 'discovered', ?, ?, ?, ?, ?)
                 """,
-                (ticket_key, source, mode, ticket_key, timestamp, timestamp),
+                (ticket_key, source, mode, ticket_key, project, agent, timestamp, timestamp),
             )
         return self.get(cursor.lastrowid)
 
-    def ensure_auto_run(self, ticket_key: str) -> sqlite3.Row:
+    def ensure_auto_run(self, ticket_key: str, project: str, agent: str) -> sqlite3.Row:
         """Return the open automatic run, creating it atomically if needed."""
         timestamp = now_epoch()
         with self.connection:
             self.connection.execute(
                 """
                 INSERT INTO runs (
-                    ticket_key, source, mode, state, display_name, created_at, updated_at
+                    ticket_key, source, mode, state, display_name, project, agent,
+                    created_at, updated_at
                 )
-                SELECT ?, 'jira-poller', 'auto', 'discovered', ?, ?, ?
+                SELECT ?, 'jira-poller', 'auto', 'discovered', ?, ?, ?, ?, ?
                 WHERE NOT EXISTS (
                     SELECT 1 FROM runs
                     WHERE ticket_key = ? AND source = 'jira-poller'
                       AND state != 'acknowledged'
                 )
                 """,
-                (ticket_key, ticket_key, timestamp, timestamp, ticket_key),
+                (ticket_key, ticket_key, project, agent, timestamp, timestamp, ticket_key),
             )
         row = self.latest_auto(ticket_key)
         if row is None:
@@ -280,10 +361,8 @@ class JiraClient:
             raise TicketflowError(f"Jira {method} {path} failed: {error.reason}") from error
 
     def search_triggered(self) -> list[dict[str, Any]]:
-        jql = (
-            f'project = MEMS AND labels = "{TRIGGER_LABEL}" '
-            "AND statusCategory != Done ORDER BY created ASC"
-        )
+        labels = ", ".join(f'"{label}"' for label in sorted(LABEL_PROJECTS))
+        jql = f"labels in ({labels}) AND statusCategory != Done ORDER BY created ASC"
         issues: list[dict[str, Any]] = []
         next_page_token: str | None = None
         while True:
@@ -305,16 +384,20 @@ class JiraClient:
         fields = urllib.parse.quote("summary,labels,status")
         return self._request("GET", f"/rest/api/3/issue/{ticket_key}?fields={fields}")
 
-    def acknowledge_launch(self, ticket_key: str, session_name: str) -> None:
+    def acknowledge_launch(
+        self, ticket_key: str, session_name: str, project: str, agent: str
+    ) -> None:
         # A label update can succeed while the following comment request fails.
         # Re-read labels so acknowledgment retries remain idempotent.
         issue = self.get_issue(ticket_key)
         labels = issue.get("fields", {}).get("labels", [])
         updates: list[dict[str, str]] = []
-        if TRIGGER_LABEL in labels:
-            updates.append({"remove": TRIGGER_LABEL})
-        if STARTED_LABEL not in labels:
-            updates.append({"add": STARTED_LABEL})
+        watched_label = trigger_label(project)
+        launched_label = started_label(project)
+        if watched_label in labels:
+            updates.append({"remove": watched_label})
+        if launched_label not in labels:
+            updates.append({"add": launched_label})
         if updates:
             self._request(
                 "PUT",
@@ -323,7 +406,7 @@ class JiraClient:
             )
         self.add_comment(
             ticket_key,
-            f"Ticketflow started Claude Remote Control session `{session_name}` on the remote development host.",
+            f"Ticketflow started a {agent} session `{session_name}` on the remote development host.",
         )
 
     def add_comment(self, ticket_key: str, text: str) -> None:
@@ -350,9 +433,13 @@ class Launcher:
         self.launcher_path = launcher_path
         self.workspace = workspace
 
-    def launch(self, project: str, display_name: str, prompt_path: Path) -> dict[str, Any]:
+    def launch(
+        self, project: str, display_name: str, prompt_path: Path, agent: str = "claude"
+    ) -> dict[str, Any]:
         command = [
             str(self.launcher_path),
+            "--agent",
+            agent,
             "--prompt-file",
             str(prompt_path),
             "--json",
@@ -395,7 +482,7 @@ def build_prompt(settings: Settings, ticket_key: str, mode: str) -> str:
             "the user explicitly signs off."
         )
     return (
-        f"/cb-auto-ticket {url}"
+        f"/caveman full. /cb-auto-ticket {url}"
     )
 
 
@@ -407,16 +494,15 @@ def write_prompt(settings: Settings, run_id: int, prompt: str) -> Path:
     return path
 
 
-def project_for(ticket_key: str) -> str:
-    return PROJECTS[ticket_key.split("-", 1)[0]]
-
-
-def print_dry_run(settings: Settings, ticket_key: str, mode: str) -> None:
+def print_dry_run(
+    settings: Settings, ticket_key: str, mode: str, project: str, agent: str
+) -> None:
     print(
         json.dumps(
             {
                 "ticket": ticket_key,
-                "project": project_for(ticket_key),
+                "project": project,
+                "agent": agent,
                 "display_name": ticket_key,
                 "mode": mode,
                 "prompt": build_prompt(settings, ticket_key, mode),
@@ -436,7 +522,9 @@ def launch_run(
 ) -> sqlite3.Row:
     prompt = build_prompt(settings, run["ticket_key"], run["mode"])
     if dry_run:
-        print_dry_run(settings, run["ticket_key"], run["mode"])
+        print_dry_run(
+            settings, run["ticket_key"], run["mode"], run["project"], run["agent"]
+        )
         return run
 
     claimed = store.claim_launch(run["id"])
@@ -446,7 +534,7 @@ def launch_run(
     store.update(run["id"], prompt_path=str(prompt_path))
     try:
         session = launcher.launch(
-            project_for(run["ticket_key"]), run["display_name"], prompt_path
+            run["project"], run["display_name"], prompt_path, run["agent"]
         )
     except TicketflowError as error:
         error_text = sanitize_error(str(error))
@@ -474,7 +562,12 @@ def launch_run(
 def acknowledge_run(jira: JiraClient, store: Store, run: sqlite3.Row) -> sqlite3.Row:
     session = json.loads(run["session_json"] or "{}")
     try:
-        jira.acknowledge_launch(run["ticket_key"], session.get("display_name", run["display_name"]))
+        jira.acknowledge_launch(
+            run["ticket_key"],
+            session.get("display_name", run["display_name"]),
+            run["project"],
+            run["agent"],
+        )
     except TicketflowError as error:
         return store.update(
             run["id"], last_error=str(error), next_attempt_at=now_epoch() + 60
@@ -490,7 +583,7 @@ def report_terminal_failure(jira: JiraClient, store: Store, run: sqlite3.Row) ->
     try:
         jira.add_comment(
             run["ticket_key"],
-            "Ticketflow could not start the remote Claude session after four attempts. "
+            f"Ticketflow could not start the remote {run['agent']} session after four attempts. "
             f"Run `ticketflow retry {run['ticket_key']}` on the host after correcting the problem. "
             f"Last error: {sanitize_error(run['last_error'] or 'unknown error')}",
         )
@@ -500,15 +593,10 @@ def report_terminal_failure(jira: JiraClient, store: Store, run: sqlite3.Row) ->
     store.update(run["id"], failure_reported=1)
 
 
-def issue_has_trigger(issue: dict[str, Any]) -> bool:
-    labels = issue.get("fields", {}).get("labels", [])
-    return TRIGGER_LABEL in labels
-
-
 def print_session(session: dict[str, Any]) -> None:
     print("Remote session is running.")
     print(f"  Agent:          {session.get('agent', 'claude')}")
-    print(f"  Claude session: {session.get('display_name')}")
+    print(f"  Session:        {session.get('display_name')}")
     print(f"  tmux session:   {session.get('tmux_session')}")
     print(f"  Worktree:       {session.get('worktree')}")
     print("\nManage locally:")
@@ -522,11 +610,12 @@ def print_session(session: dict[str, Any]) -> None:
 
 def command_start(args: argparse.Namespace, settings: Settings) -> int:
     ticket_key = normalize_ticket(args.ticket)
+    project = project_for_ticket(ticket_key)
     if args.dry_run:
-        print_dry_run(settings, ticket_key, "manual")
+        print_dry_run(settings, ticket_key, "manual", project, args.agent)
         return 0
     store = Store(settings.database_path)
-    run = store.create_run(ticket_key, "manual", "manual")
+    run = store.create_run(ticket_key, "manual", "manual", project, args.agent)
     launcher = Launcher(settings.launcher_path, settings.workspace)
     launched = launch_run(settings, store, launcher, run)
     if launched["state"] != "launched":
@@ -552,20 +641,27 @@ def command_poll(args: argparse.Namespace, settings: Settings) -> int:
     launched_this_poll = False
     for issue in issues:
         ticket_key = normalize_ticket(issue["key"])
+        project = project_for_issue(issue)
+        if project is None:
+            continue
+        agent = agent_for_issue(issue)
         latest = store.latest_auto(ticket_key)
         if latest and latest["state"] == "acknowledged":
             current = jira.get_issue(ticket_key)
-            if not issue_has_trigger(current):
+            current_project = project_for_issue(current)
+            if current_project is None:
                 continue
+            project = current_project
+            agent = agent_for_issue(current)
             if args.dry_run:
-                print_dry_run(settings, ticket_key, "auto")
+                print_dry_run(settings, ticket_key, "auto", project, agent)
                 return 0
-            latest = store.ensure_auto_run(ticket_key)
+            latest = store.ensure_auto_run(ticket_key, project, agent)
         elif latest is None:
             if args.dry_run:
-                print_dry_run(settings, ticket_key, "auto")
+                print_dry_run(settings, ticket_key, "auto", project, agent)
                 return 0
-            latest = store.ensure_auto_run(ticket_key)
+            latest = store.ensure_auto_run(ticket_key, project, agent)
 
         if latest["state"] == "launched":
             if args.dry_run:
@@ -585,7 +681,13 @@ def command_poll(args: argparse.Namespace, settings: Settings) -> int:
         if launched_this_poll:
             continue
         if args.dry_run:
-            print_dry_run(settings, ticket_key, latest["mode"])
+            print_dry_run(
+                settings,
+                ticket_key,
+                latest["mode"],
+                latest["project"],
+                latest["agent"],
+            )
             return 0
         result = launch_run(settings, store, launcher, latest, dry_run=args.dry_run)
         launched_this_poll = True
@@ -635,7 +737,10 @@ def command_doctor(_args: argparse.Namespace, settings: Settings) -> int:
     checks = [
         ("session launcher", settings.launcher_path.is_file() and os.access(settings.launcher_path, os.X_OK)),
         ("Claude Code", shutil.which("claude") is not None),
-        ("mapped repository", (settings.workspace / PROJECTS["MEMS"]).is_dir()),
+        *[
+            (f"mapped repository: {project}", (settings.workspace / project).is_dir())
+            for project in PROJECT_LABELS
+        ],
         ("Jira email", bool(settings.jira_email)),
         ("Jira API token", bool(settings.jira_api_token)),
     ]
@@ -658,9 +763,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = subparsers.add_parser("start", help="start a gated cb-all session")
     start.add_argument("ticket", help="Jira key or URL")
+    start.add_argument("--agent", choices=sorted(AGENT_LABELS), default="claude")
     start.add_argument("--dry-run", action="store_true")
 
-    poll = subparsers.add_parser("poll", help="poll Jira for agent-dev tickets")
+    poll = subparsers.add_parser("poll", help="poll Jira for josh-* project labels")
     poll.add_argument("--once", action="store_true")
     poll.add_argument("--dry-run", action="store_true")
 
