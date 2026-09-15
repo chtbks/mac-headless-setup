@@ -135,6 +135,12 @@ nothing else.
 
 ### Cursor — per-session named workers
 
+For persistent access to the main checkouts, `57-cursor` now installs a separate
+personal worker at login using `ai.chatbooks.cursor-worker`. See the
+[Cursor recovery runbook](cursor-remote-recovery.md). The per-session launcher
+described below still creates temporary, isolated worktree workers; these are
+not automatically resurrected after reboot.
+
 `cursor-agent worker start --name <display-name> --worker-dir <worktree>`
 registers a **named private worker** with Cursor scoped to the directories given,
 and prints `https://cursor.com/agents#workerId=<uuid>`. The launcher extracts

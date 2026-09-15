@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Keep a repo-scoped personal Cursor worker available after login and exit."""
+
+import argparse
+import os
+from pathlib import Path
+import plistlib
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import uuid
+
+
+LABEL = "ai.chatbooks.cursor-worker"
+DEFAULT_REPOS = ("artemis", "iphone", "backend", "fluttershy", "chatty-family")
+
+
+def install(user_home, binary, name, roots):
+    if not roots or any(not root.is_dir() for root in roots):
+        raise ValueError("Provide at least one existing repository directory.")
+    agents = user_home / "Library/LaunchAgents"
+    logs = user_home / "Library/Logs/MacSetup"
+    data = user_home / ".local/share/cursor-agent/macsetup-worker"
+    destination = agents / f"{LABEL}.plist"
+    previous = plistlib.loads(destination.read_bytes()) if destination.exists() else {}
+    worker_id = previous.get("EnvironmentVariables", {}).get("CURSOR_AGENT_WORKER_ID") or str(uuid.uuid4())
+    arguments = [str(binary), "worker", "--name", name, "--data-dir", str(data)]
+    for root in roots:
+        arguments.extend(["--worker-dir", str(root)])
+    arguments.append("start")
+    job = {
+        "Label": LABEL,
+        "ProgramArguments": arguments,
+        "WorkingDirectory": str(roots[0]),
+        "EnvironmentVariables": {
+            "HOME": str(user_home),
+            "PATH": f"{user_home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "CURSOR_AGENT_WORKER_ID": worker_id,
+        },
+        "RunAtLoad": True,
+        # Cursor stays in the foreground, including its child tool processes.
+        # Restart even after clean idle release; limit failed startup retries.
+        "KeepAlive": True,
+        "ThrottleInterval": 30,
+        "Umask": 0o077,
+        "StandardOutPath": str(logs / "cursor-worker.log"),
+        "StandardErrorPath": str(logs / "cursor-worker.err.log"),
+    }
+    contents = plistlib.dumps(job)
+    changed = not destination.exists() or destination.read_bytes() != contents
+    agents.mkdir(parents=True, exist_ok=True)
+    logs.mkdir(parents=True, exist_ok=True, mode=0o700)
+    data.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if changed:
+        with tempfile.NamedTemporaryFile(dir=agents, prefix=".cursor-", delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write(contents)
+                stream.flush()
+                temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+    destination.chmod(0o600)
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{LABEL}"
+
+    def launchctl(*args, check=True):
+        return subprocess.run(["/bin/launchctl", *args], check=check, capture_output=True, text=True)
+
+    loaded = launchctl("print", target, check=False).returncode == 0
+    launchctl("enable", target)
+    if loaded and changed:
+        launchctl("bootout", target)
+        loaded = False
+    if loaded:
+        launchctl("kickstart", target)  # No -k: an unchanged worker keeps running.
+    else:
+        launchctl("bootstrap", domain, str(destination))
+    return destination
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--name", default=f"{socket.gethostname().removesuffix('.local')} - Cursor")
+    parser.add_argument("--workspace", type=Path, default=Path.home() / "workspace",
+                        help="parent of the five default repos (used when no roots are supplied)")
+    parser.add_argument("roots", nargs="*", type=Path,
+                        help="exact repo roots; default: existing artemis, iphone, backend, fluttershy, chatty-family")
+    args = parser.parse_args()
+    if sys.platform != "darwin" or os.getuid() == 0:
+        sys.exit("Run this on macOS as the logged-in host user, without sudo.")
+    binary = shutil.which("cursor-agent")
+    if not binary:
+        sys.exit("Install Cursor CLI with the 57-cursor setup module, then run cursor-agent login.")
+    roots = args.roots or [args.workspace / repo for repo in DEFAULT_REPOS if (args.workspace / repo).is_dir()]
+    roots = list(dict.fromkeys(root.expanduser().absolute() for root in roots))
+    try:
+        destination = install(Path.home(), Path(binary).absolute(), args.name, roots)
+    except (OSError, ValueError, plistlib.InvalidFileException, subprocess.CalledProcessError) as error:
+        detail = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)
+        sys.exit(f"Could not install Cursor worker: {detail}")
+    print(f"Installed {destination}\nWorker name: {args.name}")
+    print("Repository roots:\n" + "\n".join(f"  {root}" for root in roots))
+    print("Starts at login and restarts on exit. Check registration with cursor-agent worker debug.")
+
+
+if __name__ == "__main__":
+    main()

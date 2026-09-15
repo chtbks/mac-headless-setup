@@ -4,8 +4,9 @@
 # Cursor's remote surface is a named private worker: `cursor-agent worker start
 # --name <name> --worker-dir <dir>` registers with Cursor and returns a
 # cursor.com/agents#workerId=… link, so unlike Codex each session IS individually
-# addressable. Workers are started per session by bin/spawn-session.sh (installed
-# by 92-agent-sessions), not here — this module only installs and authenticates.
+# addressable. This module also installs a persistent worker for the existing
+# main checkouts. Separate, temporary worktree workers can still be started by
+# bin/spawn-session.sh (installed by 92-agent-sessions).
 #
 # Login is interactive (browser), so it is a checkpoint.
 #
@@ -16,7 +17,28 @@ module_main() {
 
   _cursor_install || return 1
   _cursor_login
+  _cursor_service || return 1
   return 0
+}
+
+_cursor_service() {
+  if ! cursor-agent status >/dev/null 2>&1; then
+    add_manual_todo "After Cursor login and cloning repos, run: ./bin/install-cursor-service"
+    return 0
+  fi
+  local workspace="${WORKSPACE_DIR:-${HOME}/workspace}" project
+  local roots=()
+  for project in artemis iphone backend fluttershy chatty-family; do
+    [[ -d "${workspace}/${project}" ]] && roots+=("${workspace}/${project}")
+  done
+  if [[ "${#roots[@]}" -eq 0 ]]; then
+    log_warn "No Cursor repository roots exist yet; deferring the persistent worker"
+    add_manual_todo "After cloning repos, run: ./bin/install-cursor-service /absolute/repo/path [more/repo/paths]"
+    return 0
+  fi
+  have python3 || { log_error "python3 missing; install Python 3, then retry 57-cursor"; return 1; }
+  run_logged "install Cursor login/recovery worker" \
+    python3 "${REPO_ROOT}/bin/install-cursor-service" "${roots[@]}"
 }
 
 _cursor_install() {
