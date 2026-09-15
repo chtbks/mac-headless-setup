@@ -46,6 +46,8 @@ module_main() {
   _check "tmux"                    command -v tmux
   _check "Codex CLI"               command -v codex
   _check "Codex authenticated"     bash -c 'codex login status >/dev/null 2>&1'
+  _check "Codex startup plist"     test -f "${HOME}/Library/LaunchAgents/ai.chatbooks.codex-remote-control.plist"
+  _check "Codex launchd job"       launchctl print "gui/$(id -u)/ai.chatbooks.codex-remote-control"
   _check "Codex remote control"    bash -c 'codex remote-control start >/dev/null 2>&1'
   _check "Cursor CLI"              command -v cursor-agent
   _check "Cursor authenticated"    bash -c 'cursor-agent status >/dev/null 2>&1'

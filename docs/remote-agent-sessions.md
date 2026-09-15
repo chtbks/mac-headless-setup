@@ -170,6 +170,13 @@ host, and threads are opened from the ChatGPT app by picking a directory. So:
 - **The display name is local only.** Codex names its own threads, so don't tell
   anyone to look for it by name in the app.
 
+**Restart recovery:** `56-codex` also installs the
+`ai.chatbooks.codex-remote-control` LaunchAgent. It starts remote access at login
+and retries every 60 seconds. A one-off `remote-control start` (or a bootstrap
+that reports `backend: "pid"`) is insufficient for future boots. See the
+[recovery runbook](codex-remote-recovery.md) for installation, checks, and the
+requirement to log in to the host account after reboot.
+
 Also ruled out: the app-server control socket does not answer app-server JSON-RPC
 (`initialize` gets silence), so the launcher cannot create a named thread
 programmatically. That is why Codex parity stops where it does.
@@ -201,11 +208,14 @@ full detail lands in `~/.codex/logs_2.sqlite` (rows whose target is like
 |---|---|---|
 | `403 codex_workspace_access_denied` | workspace admin has not granted Codex access | grant it in ChatGPT workspace admin, or use a different workspace |
 | `403 {"detail":"Multi-factor authentication required"}` | session was SSO-only (`amr: ['urn:openai:amr:google']`) | `codex logout && codex login`, completing MFA |
-| `401 token_revoked` | **the daemon is still holding a pre-login token** | `codex remote-control stop && codex remote-control start` |
+| `401 token_revoked` | **the daemon is still holding a pre-login token** | after login, restart the daemon; allow the old process to exit before starting again |
 
 That last one is the trap: after re-authenticating, restart the daemon before
-concluding anything is wrong with the account. `scripts/56-codex.sh` always stops
-the daemon before starting it for exactly this reason.
+concluding anything is wrong with the account. `scripts/56-codex.sh` tries
+enrollment first and only stops/retries after a failure, waiting for the old
+control socket to disappear. For manual maintenance, first
+[unload automatic recovery](codex-remote-recovery.md#pause-or-remove), then stop
+the daemon, complete login, and rerun the service installer.
 
 Local Codex usage works throughout all of these — only enrollment is affected.
 

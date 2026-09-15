@@ -109,6 +109,12 @@ register per session, Codex is machine-wide and cannot name a thread remotely.
 Codex trust and enrollment quirks (including the `401 token_revoked` trap after
 re-login), and how to connect from the macOS desktop app.
 
+**Codex offline after restarting the Mac?** See
+[`docs/codex-remote-recovery.md`](docs/codex-remote-recovery.md). The `56-codex`
+module installs a login job that starts remote access and retries every minute.
+On an existing host, run `./bin/install-codex-service` once to add it without
+rerunning the full setup. The host account must log in after a reboot.
+
 For ticket-driven work, `93-ticketflow` also installs a 60-second Jira poller.
 Adding a repository label (`josh-iphone`, `josh-artemis`, `josh-backend`,
 `josh-fluttershy`, or `josh-chatty-family`) to any Jira issue starts a coding
@@ -166,7 +172,7 @@ interactive prompt**.
 | `50-github` | GitHub auth (`gh` device flow) + git identity + credential helper |
 | `52-repo-access` | verify `qa` can read the private `chtbks` SPM repos |
 | `55-claude-code` | Claude Code native installer |
-| `56-codex` | Codex CLI + machine-wide remote-control enrollment |
+| `56-codex` | Codex CLI + remote-control enrollment + login/recovery launchd job |
 | `57-cursor` | Cursor CLI (`cursor-agent`) |
 | `60-xcodebuildmcp` | install the XcodeBuildMCP CLI globally (`xcodebuildmcp`, `xcodebuildmcp-doctor`) |
 | `70-tailscale` | tailscaled + join tailnet |
@@ -221,6 +227,7 @@ config.example.env           secret template (copy to config.env)
 lib/common.sh                logging, run-step engine, retry, secrets, checkpoints
 scripts/*.sh                 one module per concern (see table above)
 bin/spawn-session.sh         remote-session launcher (installed to ~/spawn-session.sh)
+bin/install-codex-service    install Codex remote startup/recovery for the logged-in user
 bin/ticketflow               Jira intake CLI (installed to ~/.local/bin/ticketflow)
 bin/ticketflow-remote        SSH client for starting Ticketflow from another machine
 templates/hermes-skills/     the Hermes skill that calls the launcher

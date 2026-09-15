@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Install the login/recovery job for the existing user's Codex remote daemon."""
+
+import os
+from pathlib import Path
+import plistlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+LABEL = "ai.chatbooks.codex-remote-control"
+
+
+def install(user_home, codex_home, codex_binary):
+    agents = user_home / "Library/LaunchAgents"
+    logs = user_home / "Library/Logs/MacSetup"
+    agents.mkdir(parents=True, exist_ok=True)
+    logs.mkdir(parents=True, exist_ok=True, mode=0o700)
+    destination = agents / f"{LABEL}.plist"
+    job = {
+        "Label": LABEL,
+        # Keep the stable symlink: resolving it would pin an old CLI release.
+        "ProgramArguments": [str(codex_binary), "remote-control", "start", "--json"],
+        "WorkingDirectory": str(user_home),
+        "EnvironmentVariables": {
+            "HOME": str(user_home),
+            "CODEX_HOME": str(codex_home),
+            "PATH": f"{user_home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        },
+        "RunAtLoad": True,
+        "StartInterval": 60,
+        # The start command exits after spawning a daemon. Do not kill its
+        # descendants or loop continuously with KeepAlive.
+        "AbandonProcessGroup": True,
+        "Umask": 0o077,
+        "StandardOutPath": str(logs / "codex-remote-control.log"),
+        "StandardErrorPath": str(logs / "codex-remote-control.err.log"),
+    }
+    contents = plistlib.dumps(job)
+    changed = not destination.exists() or destination.read_bytes() != contents
+    if changed:
+        with tempfile.NamedTemporaryFile(dir=agents, prefix=".codex-", delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write(contents)
+                stream.flush()
+                temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+    destination.chmod(0o600)
+
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{LABEL}"
+
+    def launchctl(*args, check=True):
+        return subprocess.run(["/bin/launchctl", *args], check=check, capture_output=True, text=True)
+
+    loaded = launchctl("print", target, check=False).returncode == 0
+    launchctl("enable", target)
+    if loaded and changed:
+        launchctl("bootout", target)
+        loaded = False
+    if loaded:
+        launchctl("kickstart", target)  # No -k: leave an in-flight start alone.
+    else:
+        launchctl("bootstrap", domain, str(destination))
+    return destination
+
+
+def main():
+    if sys.platform != "darwin" or os.getuid() == 0:
+        sys.exit("Run this on macOS as the logged-in host user, without sudo.")
+    binary = shutil.which("codex")
+    if not binary:
+        sys.exit("Codex is missing from PATH. Install it with the 56-codex setup module first.")
+    user_home = Path.home()
+    codex_home = Path(os.environ.get("CODEX_HOME", user_home / ".codex")).expanduser().absolute()
+    try:
+        destination = install(user_home, codex_home, Path(binary).absolute())
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)
+        sys.exit(f"Could not load Codex login job: {detail}\nLog in to the Mac as this user, then rerun this installer.")
+    print(f"Installed {destination}")
+    print("Starts at login and retries every 60 seconds. Verify enrollment: codex remote-control start --json")
+
+
+if __name__ == "__main__":
+    main()

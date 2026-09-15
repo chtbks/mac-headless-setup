@@ -18,6 +18,12 @@ module_main() {
 
   _codex_install || return 1
   _codex_login    # non-fatal: records a manual TODO when unauthenticated
+  # macOS's Codex PID backend survives terminal exit, but has no boot/login
+  # registration. Install recovery before enrollment so a reboot or delayed
+  # network cannot leave the host offline indefinitely.
+  have python3 || { log_error "python3 missing (Brewfile step incomplete)"; return 1; }
+  run_logged "install Codex login/recovery job" \
+    python3 "${REPO_ROOT}/bin/install-codex-service" || return 1
   _codex_remote_control
   return 0
 }
