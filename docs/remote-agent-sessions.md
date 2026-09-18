@@ -247,6 +247,31 @@ Local Codex usage works throughout all of these — only enrollment is affected.
   [#25532](https://github.com/openai/codex/issues/25532)); the SSH route or
   `chatgpt.com/codex` in a browser reach the same sessions.
 
+## iOS archives and the keychain
+
+**The tmux sessions the launcher creates are not currently set up for keychain
+access, and an iOS archive needs it.** `xcodebuild archive` and `codesign` have
+to read the signing identity's private key out of the login keychain. Run an
+archive inside a launcher-created tmux session and it fails to find or use the
+certificate.
+
+Do not try to fix this with `security unlock-keychain`. That changes the
+keychain's *lock state*, which is a property of the keychain itself and is
+already unlocked — the FileVault-driven login unlocks it at boot and it stays
+unlocked (`no-timeout`, no lock-on-sleep). Reading a key whose ACL asks for
+confirmation is a separate permission, and it is denied to a process with no GUI
+session to display the prompt. Unlocking an already-unlocked keychain does
+nothing for it.
+
+**For anything that archives or uploads to TestFlight, spawn the agent session
+directly from Claude Code** — `claude.ai/code`, the desktop app, or the phone —
+rather than through `spawn-session.sh` and tmux. A session started that way runs
+under the logged-in desktop session and can reach the certificates and keys the
+archive needs.
+
+Everything that does not sign code is unaffected; the tmux route is fine for
+ordinary build, test and edit work.
+
 ## Housekeeping
 
 Killing a tmux session stops the agent but does **not** remove a worktree the
