@@ -38,7 +38,15 @@ _cursor_service() {
   fi
   have python3 || { log_error "python3 missing; install Python 3, then retry 57-cursor"; return 1; }
   run_logged "install Cursor login/recovery worker" \
-    python3 "${REPO_ROOT}/bin/install-cursor-service" "${roots[@]}"
+    python3 "${REPO_ROOT}/bin/install-cursor-service" "${roots[@]}" || return 1
+  # Additional roots on the original worker do not change its primary repo.
+  # Give these projects their own assignment identity and independent runtime.
+  for project in iphone chatty-family; do
+    [[ -d "${workspace}/${project}" ]] || continue
+    run_logged "install Cursor ${project} worker" \
+      python3 "${REPO_ROOT}/bin/install-cursor-service" \
+        --service-id "${project}" "${workspace}/${project}" || return 1
+  done
 }
 
 _cursor_install() {

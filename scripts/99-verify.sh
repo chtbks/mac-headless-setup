@@ -53,6 +53,13 @@ module_main() {
   _check "Cursor authenticated"    bash -c 'cursor-agent status >/dev/null 2>&1'
   _check "Cursor startup plist"    test -f "${HOME}/Library/LaunchAgents/ai.chatbooks.cursor-worker.plist"
   _check "Cursor worker running"   bash -c 'launchctl print "gui/$(id -u)/ai.chatbooks.cursor-worker" | grep -q "state = running"'
+  local cursor_project
+  for cursor_project in iphone chatty-family; do
+    if [[ -d "${WORKSPACE_DIR:-${HOME}/workspace}/${cursor_project}" ]]; then
+      _check "Cursor ${cursor_project} worker running" bash -c \
+        'launchctl print "gui/$(id -u)/ai.chatbooks.cursor-worker-$1" | grep -q "state = running"' _ "${cursor_project}"
+    fi
+  done
 
   # --- Hermes + session launcher -------------------------------------------
   _check "hermes CLI"              command -v hermes

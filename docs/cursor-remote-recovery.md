@@ -1,5 +1,39 @@
 # Cursor remote access after restart
 
+## Separate primary repositories (2026-09-23)
+
+The original worker uses `artemis` as its primary assignment directory. Its
+additional roots do not create separate primary environments; chatty-family
+work routed through it was reported to use the wrong main repo. Two independent
+workers now provide `iphone` and `chatty-family` as their primary repositories:
+
+```bash
+./bin/install-cursor-service --service-id iphone "$HOME/workspace/iphone"
+./bin/install-cursor-service --service-id chatty-family "$HOME/workspace/chatty-family"
+```
+
+`57-cursor` installs these workers too when the corresponding checkouts exist.
+The original Artemis worker and its ID are preserved. Each new worker has a
+separate persistent ID, launchd label, data directory/lock, and log files.
+Reinstalling with the same service ID preserves that worker's identity.
+Use an explicit root with `--service-id`; the first root is the primary repo.
+
+| Primary repo | launchd label | Log prefix under `~/Library/Logs/MacSetup/` |
+| --- | --- | --- |
+| artemis (original, with additional roots) | `ai.chatbooks.cursor-worker` | `cursor-worker` |
+| iphone | `ai.chatbooks.cursor-worker-iphone` | `cursor-worker-iphone` |
+| chatty-family | `ai.chatbooks.cursor-worker-chatty-family` | `cursor-worker-chatty-family` |
+
+The web dashboard's Workspace column may show the primary folder name rather
+than the custom worker name. Select the new worker's ID when multiple computers
+have rows named `iphone` or `chatty-family`. Use the corresponding label and log
+prefix in the maintenance commands below. Data directories use the same service
+suffix: `~/.local/share/cursor-agent/macsetup-worker-iphone` and
+`~/.local/share/cursor-agent/macsetup-worker-chatty-family`.
+
+These workers retain the same login/restart behavior and FileVault limitation
+described below. They use existing checkouts, not newly created worktrees.
+
 Cursor has two separate routes to this Mac:
 
 | Route | What you use | What must run on this Mac |

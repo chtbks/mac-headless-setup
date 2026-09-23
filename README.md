@@ -121,6 +121,10 @@ supported repos that exist under `~/workspace`. Existing hosts can run
 `./bin/install-cursor-service`. See
 [`docs/cursor-remote-recovery.md`](docs/cursor-remote-recovery.md) for the two
 connection types, startup behavior, exact repo selection, and recovery checks.
+The setup also installs separate `iphone` and `chatty-family` workers so each
+can be selected as the primary repository, alongside the original Artemis worker.
+Install them directly with `./bin/install-cursor-service --service-id iphone
+"$HOME/workspace/iphone"` (or `chatty-family` with its matching path).
 
 For ticket-driven work, `93-ticketflow` also installs a 60-second Jira poller.
 Adding a repository label (`josh-iphone`, `josh-artemis`, `josh-backend`,

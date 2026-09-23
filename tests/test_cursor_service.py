@@ -99,6 +99,34 @@ class CursorServiceTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 service.install(self.user_home, self.binary, "QA", self.roots)
 
+    def test_independent_workers_preserve_original_and_their_own_identities(self):
+        original = self.install()
+        before = original.read_bytes()
+        paths = []
+        with patch.object(service.subprocess, "run", side_effect=self.launchctl):
+            for index, service_id in enumerate(["iphone", "chatty-family"]):
+                path = service.install(self.user_home, self.binary, service_id,
+                                       [self.roots[index]], service_id)
+                contents = path.read_bytes()
+                service.install(self.user_home, self.binary, service_id,
+                                [self.roots[index]], service_id)
+                self.assertEqual(path.read_bytes(), contents)
+                job = plistlib.loads(contents)
+                self.assertEqual(job["WorkingDirectory"], str(self.roots[index]))
+                self.assertEqual(job["ProgramArguments"].count("--worker-dir"), 1)
+                paths.append(path)
+        self.assertEqual(original.read_bytes(), before)
+        jobs = [plistlib.loads(p.read_bytes()) for p in [original, *paths]]
+        for key in ["Label", "StandardOutPath", "StandardErrorPath"]:
+            self.assertEqual(len({job[key] for job in jobs}), 3)
+        self.assertEqual(len({job["EnvironmentVariables"]["CURSOR_AGENT_WORKER_ID"] for job in jobs}), 3)
+        self.assertEqual(len({job["ProgramArguments"][5] for job in jobs}), 3)
+
+    def test_service_id_cannot_escape_its_directory(self):
+        for service_id in ["../bad", "", "bad/name"]:
+            with self.assertRaises(ValueError):
+                service.install(self.user_home, self.binary, "QA", self.roots, service_id)
+
 
 if __name__ == "__main__":
     unittest.main()
